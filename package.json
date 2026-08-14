@@ -11,6 +11,7 @@
     "typecheck": "tsc -b --force",
     "stations": "node scripts/build-stations.mjs",
     "check:tide": "node --experimental-strip-types scripts/check-tide.ts",
+    "check:activities": "node --experimental-strip-types scripts/check-activities.ts",
     "shot": "node scripts/shot.mjs"
   },
   "dependencies": {

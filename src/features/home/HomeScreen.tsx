@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ImageBannerAd } from "../../components/BannerAd";
 import { Card } from "../../components/ScreenLayout";
 import { EVENT, track, trackScreen } from "../../lib/analytics";
+import type { LatLng } from "../../lib/geo";
 import {
   favoriteIds,
   lastStation,
@@ -24,6 +25,7 @@ import {
   type StationTide,
 } from "../../lib/tide";
 import { palette, tierStyle } from "../../theme";
+import { ActivityChips } from "./ActivityChips";
 import { StationPicker } from "./StationPicker";
 
 type Phase =
@@ -36,6 +38,8 @@ export function HomeScreen() {
   const [picking, setPicking] = useState(false);
   const [dayOffset, setDayOffset] = useState(0);
   const [favIds, setFavIds] = useState<string[]>(() => favoriteIds());
+  // 활동 칩 20km 판정에만 써요 — 위치를 못 얻으면 칩 자체를 숨깁니다.
+  const [coords, setCoords] = useState<LatLng | null>(null);
 
   const pick = useCallback(async (id: string, stations: Station[]) => {
     const tide = await loadTide(id);
@@ -58,10 +62,9 @@ export function HomeScreen() {
       // 앞에 세워두면 안 돼요.
       try {
         const loc = await Device.getLocation({ accuracy: 3 });
-        const near = nearestStation(
-          { lat: loc.coords.latitude, lng: loc.coords.longitude },
-          stations,
-        );
+        const me = { lat: loc.coords.latitude, lng: loc.coords.longitude };
+        setCoords(me);
+        const near = nearestStation(me, stations);
         await pick((near ?? stations[0]).id, stations);
         return;
       } catch {
@@ -102,6 +105,24 @@ export function HomeScreen() {
     };
   }, [dayOffset, phase]);
 
+  // 늦은 밤엔 오늘 간조가 다 지나 있어요. 내일 첫 간조까지 보여주려고 하루 앞서
+  // 받아둬요(dayOffset과 무관 — 활동 카드는 항상 "오늘"만 보므로).
+  useEffect(() => {
+    if (phase.k !== "ready") return;
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const key = todayKey(tomorrow);
+    if (phase.tide.days[key] != null) return;
+
+    let alive = true;
+    void loadTide(phase.tide.station.id, tomorrow).then((tide) => {
+      if (alive) setPhase((p) => (p.k === "ready" ? { ...p, tide } : p));
+    });
+    return () => {
+      alive = false;
+    };
+  }, [phase]);
+
   if (phase.k === "loading") return <Pad><Note text="물때표를 불러오는 중이에요…" /></Pad>;
   if (phase.k === "error")
     return (
@@ -120,6 +141,9 @@ export function HomeScreen() {
   const ts = tierStyle(t);
   const now = new Date();
   const nowMin = dayOffset === 0 ? now.getHours() * 60 + now.getMinutes() : 0;
+  // 활동 지수는 날짜 화살표와 상관없이 항상 "오늘" 기준이에요.
+  const todayEvents = tide.days[todayKey()] ?? [];
+  const todayNowMin = now.getHours() * 60 + now.getMinutes();
 
   return (
     <Pad>
@@ -203,6 +227,14 @@ export function HomeScreen() {
               <EventRow key={i} e={e} passed={dayOffset === 0 && toMin(e.t) <= nowMin} />
             ))}
           </Card>
+
+          {/* ------------------------------------------- 활동별 오늘 여건 */}
+          <ActivityChips
+            coords={coords}
+            events={todayEvents}
+            nowMin={todayNowMin}
+            stationName={tide.station.name}
+          />
         </>
       )}
 

@@ -74,6 +74,15 @@ export function nextEvent(events: Event[], nowMin: number): Event | null {
 }
 
 /**
+ * 다음 간조. 물이 들어오기 시작하는 시각의 기준이에요 — 간조를 찍고 나면
+ * 바로 물이 차오르기 시작합니다. 갯벌·해수욕처럼 물이 들어오면 위험해지는
+ * 활동에서 "언제까지 나와야 하는지" 안내에 씁니다.
+ */
+export function nextLowTide(events: Event[], nowMin: number): Event | null {
+  return events.filter((e) => e.hl === "L").find((e) => toMinutes(e.t) > nowMin) ?? null;
+}
+
+/**
  * "언제 나가야 하나" 한 줄.
  *
  * 물이 멈춰 있는 만조·간조 정각보다, 그 앞뒤로 물이 움직이는 때가 좋아요.
@@ -130,6 +139,10 @@ export function demo(): void {
   eq(nextEvent(day, 0)?.t, "0312", "자정엔 첫 만조가 다음");
   eq(nextEvent(day, toMinutes("0312"))?.t, "0930", "정각은 지난 것으로 봄");
   eq(nextEvent(day, toMinutes("2300")), null, "다 지나면 null");
+
+  eq(nextLowTide(day, 0)?.t, "0930", "다음 간조는 만조를 건너뜀");
+  eq(nextLowTide(day, toMinutes("0930"))?.t, "2201", "간조를 지나면 다음 간조");
+  eq(nextLowTide(day, toMinutes("2201")), null, "마지막 간조까지 지나면 null");
 
   eq(untilLabel(day, toMinutes("0300")), "12분 뒤 만조", "1시간 미만");
   eq(untilLabel(day, toMinutes("0100")), "2시간 12분 뒤 만조", "시간+분");

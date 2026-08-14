@@ -37,4 +37,5 @@ export const EVENT = {
   // 앱 고유
   stationPicked: "station_picked",
   dayChanged: "day_changed",
+  activityPicked: "activity_picked",
 } as const;
