@@ -5,6 +5,7 @@ import { ImageBannerAd } from "../../components/BannerAd";
 import { Card } from "../../components/ScreenLayout";
 import { EVENT, track, trackScreen } from "../../lib/analytics";
 import {
+  favoriteIds,
   lastStation,
   loadStations,
   loadTide,
@@ -23,6 +24,7 @@ import {
   type StationTide,
 } from "../../lib/tide";
 import { palette, tierStyle } from "../../theme";
+import { StationPicker } from "./StationPicker";
 
 type Phase =
   | { k: "loading" }
@@ -33,6 +35,7 @@ export function HomeScreen() {
   const [phase, setPhase] = useState<Phase>({ k: "loading" });
   const [picking, setPicking] = useState(false);
   const [dayOffset, setDayOffset] = useState(0);
+  const [favIds, setFavIds] = useState<string[]>(() => favoriteIds());
 
   const pick = useCallback(async (id: string, stations: Station[]) => {
     const tide = await loadTide(id);
@@ -138,30 +141,17 @@ export function HomeScreen() {
 
       {picking && (
         <Card style={{ padding: 8, marginBottom: 12 }}>
-          {stations.map((s) => (
-            <button
-              key={s.id}
-              onClick={() => {
-                setPicking(false);
-                setDayOffset(0);
-                void pick(s.id, stations);
-              }}
-              style={{
-                display: "block",
-                width: "100%",
-                textAlign: "left",
-                border: "none",
-                background: s.id === tide.station.id ? "rgba(22,104,184,0.08)" : "transparent",
-                borderRadius: 10,
-                padding: "12px 12px",
-                fontSize: 16,
-                fontWeight: s.id === tide.station.id ? 700 : 500,
-                color: palette.ink,
-              }}
-            >
-              {s.name}
-            </button>
-          ))}
+          <StationPicker
+            stations={stations}
+            selectedId={tide.station.id}
+            favIds={favIds}
+            onFavChange={setFavIds}
+            onPick={(id) => {
+              setPicking(false);
+              setDayOffset(0);
+              void pick(id, stations);
+            }}
+          />
         </Card>
       )}
 

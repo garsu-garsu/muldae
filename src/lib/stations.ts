@@ -100,6 +100,46 @@ export function lastStation(): string | null {
   }
 }
 
+const FAVORITES_KEY = "muldae:favorite-stations";
+
+/** 즐겨찾기 목록(id 배열). 순서가 그대로 화면에 보이는 순서예요. */
+export function favoriteIds(): string[] {
+  try {
+    const raw = localStorage.getItem(FAVORITES_KEY);
+    return raw != null ? (JSON.parse(raw) as string[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveFavorites(ids: string[]): void {
+  try {
+    localStorage.setItem(FAVORITES_KEY, JSON.stringify(ids));
+  } catch {
+    /* 시크릿 모드 등에서 실패해도 앱이 멈출 일은 아니에요. */
+  }
+}
+
+/** 즐겨찾기 켜고 끄기. 새 목록을 돌려줘요. */
+export function toggleFavorite(id: string): string[] {
+  const ids = favoriteIds();
+  const next = ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id];
+  saveFavorites(next);
+  return next;
+}
+
+/** 즐겨찾기 안에서 한 칸 위/아래로. 맨 끝이면 그대로예요. */
+export function moveFavorite(id: string, dir: -1 | 1): string[] {
+  const ids = favoriteIds();
+  const i = ids.indexOf(id);
+  const j = i + dir;
+  if (i < 0 || j < 0 || j >= ids.length) return ids;
+  const next = [...ids];
+  [next[i], next[j]] = [next[j], next[i]];
+  saveFavorites(next);
+  return next;
+}
+
 /** 오늘 날짜(한국 기준). API 요청 키와 같은 형식이에요. */
 export function todayKey(d = new Date()): string {
   const p = (n: number) => String(n).padStart(2, "0");
