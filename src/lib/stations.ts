@@ -140,6 +140,26 @@ export function moveFavorite(id: string, dir: -1 | 1): string[] {
   return next;
 }
 
+export type PickerView = "list" | "map";
+const PICKER_VIEW_KEY = "muldae:picker-view";
+
+/** 항 고르기를 목록/지도 중 마지막에 뭘로 봤는지. 지도를 좋아하면 계속 지도로 열려요. */
+export function lastPickerView(): PickerView {
+  try {
+    return localStorage.getItem(PICKER_VIEW_KEY) === "map" ? "map" : "list";
+  } catch {
+    return "list";
+  }
+}
+
+export function rememberPickerView(v: PickerView): void {
+  try {
+    localStorage.setItem(PICKER_VIEW_KEY, v);
+  } catch {
+    /* 시크릿 모드 등에서 실패해도 앱이 멈출 일은 아니에요. */
+  }
+}
+
 /** 오늘 날짜(한국 기준). API 요청 키와 같은 형식이에요. */
 export function todayKey(d = new Date()): string {
   const p = (n: number) => String(n).padStart(2, "0");

@@ -10,3 +10,11 @@ export const AD_GROUP_ID_BANNER_IMAGE =
  * 절충이에요(남용 방지는 공공데이터포털의 트래픽 제한에 맡깁니다).
  */
 export const DATA_KEY = import.meta.env?.VITE_DATA_KEY ?? "";
+
+/**
+ * 배경지도 타일 주소. OpenStreetMap — 인증키도 도메인 등록도 필요 없어요.
+ * ⚠️ OSM 공식 타일 서버는 대량 트래픽을 허용하지 않아요.
+ *    ponytail: 출시하고 트래픽이 붙으면 자체 타일 제공자로 옮기세요.
+ */
+export const TILE_URL = "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
+export const TILE_ATTRIBUTION = "© OpenStreetMap 기여자";

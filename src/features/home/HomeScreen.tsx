@@ -6,12 +6,15 @@ import { Card } from "../../components/ScreenLayout";
 import { EVENT, track, trackScreen } from "../../lib/analytics";
 import {
   favoriteIds,
+  lastPickerView,
   lastStation,
   loadStations,
   loadTide,
   nearestStation,
+  rememberPickerView,
   rememberStation,
   todayKey,
+  type PickerView,
 } from "../../lib/stations";
 import {
   bestWindow,
@@ -25,6 +28,7 @@ import {
 } from "../../lib/tide";
 import { palette, tierStyle } from "../../theme";
 import { ActivityChips } from "./ActivityChips";
+import { StationMap } from "./StationMap";
 import { StationPicker } from "./StationPicker";
 
 type Phase =
@@ -35,6 +39,7 @@ type Phase =
 export function HomeScreen() {
   const [phase, setPhase] = useState<Phase>({ k: "loading" });
   const [picking, setPicking] = useState(false);
+  const [pickerView, setPickerViewState] = useState<PickerView>(() => lastPickerView());
   const [dayOffset, setDayOffset] = useState(0);
   const [favIds, setFavIds] = useState<string[]>(() => favoriteIds());
   const [refreshing, setRefreshing] = useState(false);
@@ -108,6 +113,11 @@ export function HomeScreen() {
       .catch(() => setRefreshError("위치를 다시 잡지 못했어요."))
       .finally(() => setRefreshing(false));
   }, [refreshing, phase, locateNearest]);
+
+  const setPickerView = (v: PickerView) => {
+    setPickerViewState(v);
+    rememberPickerView(v);
+  };
 
   // 화살표로 어제·내일을 보면 그 날짜는 아직 안 받아온 상태라 API를 한 번 더 불러요.
   useEffect(() => {
@@ -190,21 +200,41 @@ export function HomeScreen() {
           <span style={{ fontSize: 16, color: palette.sub }}>{picking ? "▲" : "▼"}</span>
         </button>
 
-        <button
-          onClick={refresh}
-          disabled={refreshing}
-          style={{
-            border: "none",
-            borderRadius: 10,
-            padding: "8px 12px",
-            fontSize: 14,
-            fontWeight: 700,
-            color: refreshing ? palette.sub : palette.primary,
-            background: "rgba(22,104,184,0.10)",
-          }}
-        >
-          {refreshing ? "찾는 중…" : "다시 찾기"}
-        </button>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <button
+            onClick={() => {
+              setPickerView("map");
+              setPicking(true);
+            }}
+            aria-label="지도로 항 고르기"
+            style={{
+              border: "none",
+              borderRadius: 10,
+              width: 36,
+              height: 36,
+              fontSize: 17,
+              background: "rgba(22,104,184,0.10)",
+            }}
+          >
+            🗺️
+          </button>
+
+          <button
+            onClick={refresh}
+            disabled={refreshing}
+            style={{
+              border: "none",
+              borderRadius: 10,
+              padding: "8px 12px",
+              fontSize: 14,
+              fontWeight: 700,
+              color: refreshing ? palette.sub : palette.primary,
+              background: "rgba(22,104,184,0.10)",
+            }}
+          >
+            {refreshing ? "찾는 중…" : "다시 찾기"}
+          </button>
+        </div>
       </div>
       {refreshError != null && (
         <p style={{ fontSize: 12, color: palette.low, margin: "0 0 4px" }}>{refreshError}</p>
@@ -212,17 +242,37 @@ export function HomeScreen() {
 
       {picking && (
         <Card style={{ padding: 8, marginBottom: 12 }}>
-          <StationPicker
-            stations={stations}
-            selectedId={tide.station.id}
-            favIds={favIds}
-            onFavChange={setFavIds}
-            onPick={(id) => {
-              setPicking(false);
-              setDayOffset(0);
-              void pick(id, stations);
-            }}
-          />
+          {/* 목록형 ↔ 지도형 전환. 마지막에 고른 쪽을 기억해요. */}
+          <div style={{ display: "flex", gap: 8, padding: "4px 4px 10px" }}>
+            <ViewTab label="목록" active={pickerView === "list"} onClick={() => setPickerView("list")} />
+            <ViewTab label="지도" active={pickerView === "map"} onClick={() => setPickerView("map")} />
+          </div>
+
+          {pickerView === "list" ? (
+            <StationPicker
+              stations={stations}
+              selectedId={tide.station.id}
+              favIds={favIds}
+              onFavChange={setFavIds}
+              onPick={(id) => {
+                setPicking(false);
+                setDayOffset(0);
+                void pick(id, stations);
+              }}
+            />
+          ) : (
+            <StationMap
+              stations={stations}
+              selected={tide.station}
+              favIds={favIds}
+              onPick={(id) => {
+                setPicking(false);
+                setDayOffset(0);
+                void pick(id, stations);
+              }}
+              onTileFailed={() => setPickerView("list")}
+            />
+          )}
         </Card>
       )}
 
@@ -399,6 +449,27 @@ function DayNav({
       </span>
       <NavBtn label="›" onClick={() => onChange(offset + 1)} />
     </div>
+  );
+}
+
+/** 항 고르기 안의 목록/지도 전환 탭. */
+function ViewTab({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        flex: 1,
+        border: "none",
+        borderRadius: 10,
+        padding: "10px 0",
+        fontSize: 15,
+        fontWeight: 700,
+        color: active ? palette.white : palette.sub,
+        background: active ? palette.primary : "rgba(22,104,184,0.08)",
+      }}
+    >
+      {label}
+    </button>
   );
 }
 
