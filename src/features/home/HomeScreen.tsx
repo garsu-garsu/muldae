@@ -1,5 +1,5 @@
 import { Device } from "@apps-in-toss/web-framework";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { ImageBannerAd } from "../../components/BannerAd";
 import { Card } from "../../components/ScreenLayout";
@@ -53,15 +53,9 @@ export function HomeScreen() {
         return;
       }
 
-      // 늘 같은 데를 보는 사람이라 마지막 선택을 먼저 씁니다.
-      const saved = lastStation();
-      if (saved != null && stations.some((s) => s.id === saved)) {
-        await pick(saved, stations);
-        return;
-      }
-
-      // 처음이면 위치로 가장 가까운 곳. 위치를 막으면 첫 번째 관측소로 갑니다 —
-      // 물때를 보러 온 사람을 권한 화면 앞에 세워두면 안 돼요.
+      // 이동했을 수 있으니 위치로 가장 가까운 곳을 먼저 봅니다.
+      // 위치를 막으면 마지막에 고른 항으로 — 물때를 보러 온 사람을 권한 화면
+      // 앞에 세워두면 안 돼요.
       try {
         const loc = await Device.getLocation({ accuracy: 3 });
         const near = nearestStation(
@@ -69,9 +63,18 @@ export function HomeScreen() {
           stations,
         );
         await pick((near ?? stations[0]).id, stations);
+        return;
       } catch {
-        await pick(stations[0].id, stations);
+        // 위치를 못 쓸 때의 대비책
       }
+
+      const saved = lastStation();
+      if (saved != null && stations.some((s) => s.id === saved)) {
+        await pick(saved, stations);
+        return;
+      }
+
+      await pick(stations[0].id, stations);
     } catch {
       setPhase({ k: "error", message: "물때표를 불러오지 못했어요." });
     }
@@ -165,6 +168,7 @@ export function HomeScreen() {
           <Card style={{ marginBottom: 12 }}>
             <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
               <span style={{ fontSize: 28, fontWeight: 800, color: ts.color }}>{t}</span>
+              <GlossaryButton />
               <span style={{ fontSize: 15, color: palette.sub }}>조차 {range}cm</span>
             </div>
             <p style={{ fontSize: 15, color: palette.sub, margin: "6px 0 0", lineHeight: 1.6 }}>
@@ -217,6 +221,78 @@ export function HomeScreen() {
 /* ------------------------------------------------------------------ 조각 */
 
 const toMin = (t: string) => Number(t.slice(0, 2)) * 60 + Number(t.slice(2));
+
+/** 사리/보통/조금/조차 용어 설명. 물음표는 작게 — 물때 표시가 주인공이에요. */
+function GlossaryButton() {
+  const [open, setOpen] = useState(false);
+  const boxRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onOutside = (e: MouseEvent) => {
+      if (boxRef.current != null && !boxRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onOutside);
+    return () => document.removeEventListener("mousedown", onOutside);
+  }, [open]);
+
+  return (
+    <div ref={boxRef} style={{ position: "relative", display: "inline-flex" }}>
+      <button
+        onClick={() => setOpen((v) => !v)}
+        aria-label="물때 용어 설명 보기"
+        style={{
+          border: `1px solid ${palette.line}`,
+          borderRadius: "50%",
+          width: 22,
+          height: 22,
+          padding: 0,
+          fontSize: 13,
+          fontWeight: 700,
+          lineHeight: "20px",
+          color: palette.sub,
+          background: palette.white,
+        }}
+      >
+        ?
+      </button>
+
+      {open && (
+        <div
+          style={{
+            position: "absolute",
+            top: 28,
+            left: 0,
+            zIndex: 10,
+            width: 260,
+            padding: 16,
+            borderRadius: 14,
+            background: palette.white,
+            boxShadow: "0 4px 20px rgba(27,29,33,0.18)",
+          }}
+        >
+          <GlossaryEntry term="사리" text="물이 가장 많이 들고 나는 때예요. 갯벌이 넓게 드러나고 물살도 셉니다." />
+          <GlossaryEntry term="보통" text="사리와 조금 사이예요. 물이 적당히 움직입니다." />
+          <GlossaryEntry term="조금" text="물이 가장 적게 움직이는 때예요. 물때 차이가 작습니다." />
+          <GlossaryEntry
+            term="조차"
+            text="그날 물이 가장 높을 때와 가장 낮을 때의 높이 차이예요. 숫자가 클수록 물이 크게 움직여요."
+            last
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function GlossaryEntry({ term, text, last }: { term: string; text: string; last?: boolean }) {
+  return (
+    <div style={{ marginBottom: last ? 0 : 10 }}>
+      <span style={{ fontSize: 16, fontWeight: 800, color: palette.ink }}>{term}</span>
+      <p style={{ fontSize: 15, color: palette.sub, margin: "2px 0 0", lineHeight: 1.5 }}>{text}</p>
+    </div>
+  );
+}
 
 function DayNav({
   offset,
