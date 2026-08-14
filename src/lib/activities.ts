@@ -15,21 +15,40 @@ import { distanceM, type LatLng } from "./geo.ts";
 import { ACTIVITY_POINTS } from "./activity-points.ts";
 import { formatTime, nextLowTide, type Event } from "./tide.ts";
 
-export type ActivityKey = "낚시" | "갯벌체험" | "해수욕" | "스킨스쿠버" | "서핑";
+export type ActivityKey =
+  | "갯바위낚시"
+  | "선상낚시"
+  | "갯벌체험"
+  | "해수욕"
+  | "스킨스쿠버"
+  | "서핑"
+  | "바다여행"
+  | "뱃멀미"
+  | "바다갈라짐";
 
 export const ACTIVITY_LABEL: Record<ActivityKey, string> = {
-  낚시: "낚시",
+  갯바위낚시: "갯바위낚시",
+  선상낚시: "선상낚시",
   갯벌체험: "갯벌체험",
   해수욕: "해수욕",
   스킨스쿠버: "스킨스쿠버",
   서핑: "서핑",
+  바다여행: "바다여행",
+  뱃멀미: "뱃멀미",
+  바다갈라짐: "바다갈라짐",
 };
 
-/** 물이 들어오면 위험해지는 활동. 이 활동을 고르면 물 들어오는 시각을 같이 보여줘요. */
+/** "오늘 {verb} 좋아요" 형태의 기본 동사. 어색한 것만 예외로 바꿔요. */
+const ACTIVITY_VERB: Partial<Record<ActivityKey, string>> = {
+  바다갈라짐: "바다갈라짐 구경하기",
+};
+
+/** 물이 들어오거나 길이 잠기면 위험해지는 활동. 이 활동을 고르면 시각을 같이 보여줘요. */
 export const NEEDS_INFLOW_WARNING: ReadonlySet<ActivityKey> = new Set([
   "갯벌체험",
   "해수욕",
   "스킨스쿠버",
+  "바다갈라짐",
 ]);
 
 interface ActivityDef {
@@ -43,18 +62,31 @@ interface ActivityDef {
   include?: string;
 }
 
+const FISHING_INCLUDE =
+  "seafsPstnNm,lat,lot,predcYmd,predcNoonSeCd,totalIndex,minWvhgt,maxWvhgt,minWtem,maxWtem";
+
 const DEFS: Record<ActivityKey, ActivityDef> = {
-  낚시: {
+  갯바위낚시: {
     path: "fcstFishingv2",
     op: "GetFcstFishingApiServicev2",
     nameKey: "seafsPstnNm",
     query: "&gubun=갯바위",
-    include: "seafsPstnNm,lat,lot,predcYmd,predcNoonSeCd,totalIndex,minWvhgt,maxWvhgt,minWtem,maxWtem",
+    include: FISHING_INCLUDE,
+  },
+  선상낚시: {
+    path: "fcstFishingv2",
+    op: "GetFcstFishingApiServicev2",
+    nameKey: "seafsPstnNm",
+    query: "&gubun=선상",
+    include: FISHING_INCLUDE,
   },
   갯벌체험: { path: "fcstMudflatv2", op: "GetFcstMudflatApiServicev2", nameKey: "mdftExpcnVlgNm", query: "" },
   해수욕: { path: "fcstBeachv2", op: "GetFcstBeachApiServicev2", nameKey: "bbchNm", query: "" },
   스킨스쿠버: { path: "fcstSkinScubav2", op: "GetFcstSkinScubaApiServicev2", nameKey: "skscExpcnRgnNm", query: "" },
   서핑: { path: "fcstSurfingv2", op: "GetFcstSurfingApiServicev2", nameKey: "surfPlcNm", query: "" },
+  바다여행: { path: "fcstSeaTripv2", op: "GetFcstSeaTripApiServicev2", nameKey: "sareaDtlNm", query: "" },
+  뱃멀미: { path: "fcstSicknessv2", op: "GetFcstSicknessApiServicev2", nameKey: "nvgtNm", query: "" },
+  바다갈라짐: { path: "fcstSeaSplitv2", op: "GetFcstSeaSplitApiServicev2", nameKey: "splocPstnNm", query: "" },
 };
 
 /** 관측소 166곳 중 151곳이 이 반경 안에 활동 지점을 하나는 갖고 있어요(khoa-probe.md 4번). */
@@ -80,15 +112,33 @@ export function visibleActivities(me: LatLng): ActivityKey[] {
   return (Object.keys(DEFS) as ActivityKey[]).filter((k) => nearestActivityPoint(me, k) != null);
 }
 
-/** 지수 등급 한 줄. 원문(매우좋음~매우나쁨류)이 낯설어서 활동에 붙여 자연스러운 말로 바꿔요. */
+/**
+ * 지수 등급 한 줄. 원문(매우좋음~매우나쁨류)이 낯설어서 활동에 붙여 자연스러운 말로 바꿔요.
+ * 뱃멀미는 방향이 반대라(등급이 좋을수록 "안 멀미함") 여기 쓰면 안 되고 seasickHeadline을 써요.
+ */
 export function indexHeadline(key: ActivityKey, grade: string): string {
-  const verb = `${ACTIVITY_LABEL[key]}하기`;
+  const verb = ACTIVITY_VERB[key] ?? `${ACTIVITY_LABEL[key]}하기`;
   if (grade === "매우좋음") return `오늘 ${verb} 아주 좋아요`;
   if (grade === "좋음") return `오늘 ${verb} 좋아요`;
   if (grade === "보통") return `오늘 ${verb} 무난해요`;
   if (grade === "나쁨") return `오늘 ${verb} 별로예요`;
   if (grade === "매우나쁨") return `오늘 ${verb} 좋지 않아요`;
   return `오늘 지수: ${grade}`;
+}
+
+/**
+ * 뱃멀미 전용 한 줄. API의 totalIndex는 다른 8종과 같은 방향(매우좋음=쾌적, 매우나쁨=
+ * 험함)이지만, 그대로 indexHeadline에 넣으면 "오늘 뱃멀미하기 좋아요"가 되어 버려요 —
+ * 활동이 아니라 겪고 싶지 않은 증상이라 "좋다/나쁘다" 틀 자체가 안 맞습니다. 그래서
+ * "멀미하기 쉬운 정도"로 다시 풀어 씁니다(khoa-probe.md 확인: 등급값은 동일한 5단계).
+ */
+export function seasickHeadline(grade: string): string {
+  if (grade === "매우좋음") return "오늘 배 타기 아주 편안해요";
+  if (grade === "좋음") return "오늘 배 타기 편안해요";
+  if (grade === "보통") return "오늘 배가 조금 흔들려요";
+  if (grade === "나쁨") return "오늘 배 타면 멀미하기 쉬워요";
+  if (grade === "매우나쁨") return "오늘 배 타면 멀미하기 아주 쉬워요";
+  return `오늘 뱃멀미 지수: ${grade}`;
 }
 
 export interface ActivityRecord {
@@ -134,13 +184,22 @@ function parseRecord(key: ActivityKey, it: Record<string, unknown>): ActivityRec
   if (key === "갯벌체험") {
     return { ...base, wave: null, temp: null, begin: String(it.mdftExprnBgngTm ?? ""), end: String(it.mdftExprnEndTm ?? "") };
   }
+  if (key === "바다갈라짐") {
+    return { ...base, wave: null, temp: null, begin: String(it.splocBgngDt ?? ""), end: String(it.splocEndDt ?? "") };
+  }
   if (key === "해수욕") {
     return { ...base, wave: num(it.maxWvhgt), temp: num(it.avgWtem), open: String(it.opnStat ?? "") };
   }
   if (key === "서핑") {
     return { ...base, wave: num(it.avgWvhgt), temp: num(it.avgWtem), grade2: String(it.grdCn ?? "") };
   }
-  // 낚시, 스킨스쿠버 — min/max 파고·수온을 평균으로 대표값 삼아요.
+  if (key === "바다여행") {
+    return { ...base, wave: num(it.avgWvhgt), temp: num(it.avgWtem) };
+  }
+  if (key === "뱃멀미") {
+    return { ...base, wave: avg(it.minWvhgt, it.maxWvhgt), temp: null };
+  }
+  // 갯바위낚시, 선상낚시, 스킨스쿠버 — min/max 파고·수온을 평균으로 대표값 삼아요.
   return { ...base, wave: avg(it.minWvhgt, it.maxWvhgt), temp: avg(it.minWtem, it.maxWtem) };
 }
 
@@ -306,6 +365,13 @@ export function inflowLabel(
       line2: record.begin ? `체험 가능 ${record.begin}~${record.end}` : undefined,
     };
   }
+  if (activity === "바다갈라짐") {
+    if (!record.end) return null;
+    return {
+      line1: `${pointName} 기준 · ${record.end} 무렵부터 길이 잠겨요`,
+      line2: record.begin ? `건널 수 있는 시간 ${record.begin}~${record.end}` : undefined,
+    };
+  }
 
   const low = nextLowTide(events, nowMin);
   if (low != null) return { line1: `${stationName} 기준 · ${formatTime(low.t)} 간조 이후부터 물이 들어와요` };
@@ -397,12 +463,12 @@ export function demo(): void {
   eq(far, null, "20km 밖이면 null");
 
   // 지수 등급 → 한 줄
-  eq(indexHeadline("낚시", "매우좋음"), "오늘 낚시하기 아주 좋아요", "매우좋음");
+  eq(indexHeadline("갯바위낚시", "매우좋음"), "오늘 갯바위낚시하기 아주 좋아요", "매우좋음");
   eq(indexHeadline("서핑", "나쁨"), "오늘 서핑하기 별로예요", "나쁨");
   eq(indexHeadline("해수욕", "이상값"), "오늘 지수: 이상값", "모르는 등급은 원문 그대로");
 
   // 레코드 파싱
-  const fishing = parseRecord("낚시", {
+  const fishing = parseRecord("갯바위낚시", {
     predcYmd: "2026-08-14",
     predcNoonSeCd: "오전",
     totalIndex: "좋음",
@@ -470,6 +536,32 @@ export function demo(): void {
 
   // 내일 것도 없으면(정말 드물게) 조용히 null
   eq(inflowLabel("해수욕", beachRecord, todayLow, [], 23 * 60, "", "사초항"), null, "낼 것도 없으면 null");
+
+  // 바다갈라짐 — 갯벌과 같은 방식으로 "길이 잠기는" 시각을 지점명과 함께
+  const splitRecord: ActivityRecord = { ymd: today, noon: null, grade: "보통", wave: null, temp: null, begin: "14:39", end: "18:00" };
+  const splitInflow = inflowLabel("바다갈라짐", splitRecord, [], [], 0, "대섬", "사초항");
+  eq(splitInflow?.line1, "대섬 기준 · 18:00 무렵부터 길이 잠겨요", "바다갈라짐은 지점명 + 잠기는 시각");
+  eq(splitInflow?.line2, "건널 수 있는 시간 14:39~18:00", "건널 수 있는 시간은 둘째 줄");
+
+  const split = parseRecord("바다갈라짐", { predcYmd: today, totalIndex: "매우나쁨", splocBgngDt: "17:28", splocEndDt: "18:00" });
+  eq(split.begin, "17:28", "바다갈라짐 시작");
+  eq(split.end, "18:00", "바다갈라짐 종료(=길이 잠기는 시각)");
+
+  // 뱃멀미 — 방향이 반대라는 게 제일 중요한 점검. 등급이 나쁠수록(매우나쁨) "멀미하기
+  // 쉽다" 쪽으로, 좋을수록(매우좋음) "편안하다" 쪽으로 가야지 거꾸로면 사고입니다.
+  const seasickBad = seasickHeadline("매우나쁨");
+  const seasickGood = seasickHeadline("매우좋음");
+  if (!seasickBad.includes("멀미")) throw new Error(`나쁜 등급인데 멀미 언급이 없음: ${seasickBad}`);
+  if (seasickGood.includes("멀미")) throw new Error(`좋은 등급인데 멀미를 언급함(방향 반대 의심): ${seasickGood}`);
+  eq(seasickGood, "오늘 배 타기 아주 편안해요", "좋은 등급은 편안하다로");
+  eq(seasickBad, "오늘 배 타면 멀미하기 아주 쉬워요", "나쁜 등급은 멀미하기 쉽다로");
+  // indexHeadline(일반 템플릿)을 뱃멀미에 그대로 쓰면 "오늘 뱃멀미하기 좋아요"가 되어
+  // 방향이 뒤집혀 보이므로, seasickHeadline이 그 표현을 쓰지 않는지도 확인해요.
+  if (seasickGood.includes("뱃멀미하기")) throw new Error("일반 템플릿 표현이 새어 나옴");
+
+  // 바다갈라짐만 동사가 다름("구경하기") — 나머지는 "{label}하기" 그대로.
+  eq(indexHeadline("바다갈라짐", "좋음"), "오늘 바다갈라짐 구경하기 좋아요", "바다갈라짐은 구경하기");
+  eq(indexHeadline("선상낚시", "좋음"), "오늘 선상낚시하기 좋아요", "선상낚시는 기본 동사");
 
   console.log("activities.ts OK");
 }

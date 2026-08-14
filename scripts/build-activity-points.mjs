@@ -15,13 +15,21 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const SRC_PATH = resolve(HERE, "../data/khoa-points-live.json");
 const OUT_PATH = resolve(HERE, "../src/lib/activity-points.ts");
 
-/** 내부 키 → data/khoa-points-live.json 의 카테고리 이름 */
+/**
+ * 내부 키 → data/khoa-points-live.json 의 카테고리 이름.
+ * 갯바위낚시·선상낚시는 같은 API를 gubun만 바꿔 부르는 거라 지점표는 공유해요
+ * (khoa-points-live.json의 "바다낚시"가 이미 갯바위+선상 합집합).
+ */
 const KEY_TO_SOURCE = {
-  낚시: "바다낚시",
+  갯바위낚시: "바다낚시",
+  선상낚시: "바다낚시",
   갯벌체험: "갯벌체험",
   해수욕: "해수욕장",
   스킨스쿠버: "스킨스쿠버",
   서핑: "서핑",
+  바다여행: "바다여행",
+  뱃멀미: "뱃멀미",
+  바다갈라짐: "바다갈라짐",
 };
 
 const live = JSON.parse(readFileSync(SRC_PATH, "utf8"));

@@ -16,6 +16,7 @@ import {
   nearestRipPoint,
   pickCurrent,
   rememberActivity,
+  seasickHeadline,
   visibleActivities,
   type ActivityKey,
   type ActivityRecord,
@@ -125,10 +126,27 @@ export function ActivityChips({
         오늘 바다 활동 여건
       </p>
 
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-        {visible.map((k) => (
-          <Chip key={k} label={ACTIVITY_LABEL[k]} active={k === selected} onClick={() => pick(k)} />
-        ))}
+      {/* 최대 9개까지 붙을 수 있어요 — 줄바꿈 대신 가로 스크롤로. 오른쪽에 그러데이션을
+          얹어서 더 있다는 게 눈에 보이게 둡니다(스크롤이 실제로 필요 없어도 해로울 게 없어요). */}
+      <div style={{ position: "relative" }}>
+        <div style={{ display: "flex", gap: 8, overflowX: "auto", WebkitOverflowScrolling: "touch", paddingBottom: 2 }}>
+          {visible.map((k) => (
+            <Chip key={k} label={ACTIVITY_LABEL[k]} active={k === selected} onClick={() => pick(k)} />
+          ))}
+        </div>
+        {visible.length > 4 && (
+          <div
+            style={{
+              position: "absolute",
+              top: 0,
+              right: 0,
+              bottom: 2,
+              width: 28,
+              background: `linear-gradient(to right, transparent, ${palette.card})`,
+              pointerEvents: "none",
+            }}
+          />
+        )}
       </div>
 
       {selected != null && (
@@ -207,7 +225,9 @@ function ActivityDetail({
   nowMin: number;
   stationName: string;
 }) {
-  const headline = indexHeadline(activity, record.grade);
+  // 뱃멀미는 등급 방향이 반대라(좋음=쾌적, 나쁨=멀미 쉬움) 다른 활동과 같은 틀을
+  // 쓰면 "오늘 뱃멀미하기 좋아요"가 되어버려요. 전용 문구로 분리합니다.
+  const headline = activity === "뱃멀미" ? seasickHeadline(record.grade) : indexHeadline(activity, record.grade);
 
   const bits: string[] = [];
   if (record.wave != null) bits.push(`파도 ${record.wave}m 안팎`);
@@ -243,6 +263,8 @@ function Chip({ label, active, onClick }: { label: string; active: boolean; onCl
     <button
       onClick={onClick}
       style={{
+        flexShrink: 0,
+        whiteSpace: "nowrap",
         border: active ? "none" : `1px solid ${palette.line}`,
         borderRadius: 20,
         padding: "10px 16px",
