@@ -144,6 +144,9 @@ export function HomeScreen() {
   // 활동 지수는 날짜 화살표와 상관없이 항상 "오늘" 기준이에요.
   const todayEvents = tide.days[todayKey()] ?? [];
   const todayNowMin = now.getHours() * 60 + now.getMinutes();
+  const tomorrow = new Date();
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const tomorrowEvents = tide.days[todayKey(tomorrow)] ?? [];
 
   return (
     <Pad>
@@ -232,6 +235,7 @@ export function HomeScreen() {
           <ActivityChips
             coords={coords}
             events={todayEvents}
+            tomorrowEvents={tomorrowEvents}
             nowMin={todayNowMin}
             stationName={tide.station.name}
           />

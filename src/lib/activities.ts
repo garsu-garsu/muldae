@@ -13,6 +13,7 @@
 import { DATA_KEY } from "./env.ts";
 import { distanceM, type LatLng } from "./geo.ts";
 import { ACTIVITY_POINTS } from "./activity-points.ts";
+import { formatTime, nextLowTide, type Event } from "./tide.ts";
 
 export type ActivityKey = "낚시" | "갯벌체험" | "해수욕" | "스킨스쿠버" | "서핑";
 
@@ -273,6 +274,49 @@ export function formatYmd(ymd: string): string {
   return `${Number(m)}월 ${Number(d)}일`;
 }
 
+export interface InflowLabel {
+  line1: string;
+  line2?: string;
+}
+
+/**
+ * 물이 들어오면 위험해지는 활동만 — 언제까지 나와야 하는지 안내예요.
+ * 갯벌 지점과 물때표의 관측소는 서로 다른 곳이라 시각이 다를 수 있어요. 그래서
+ * "어디 기준 시각인지"를 문구에 꼭 넣어요 — 안 넣으면 두 시각을 헷갈려서 고립 사고로
+ * 이어질 수 있습니다.
+ *
+ * 오늘 남은 간조가 없으면(늦은 밤) 내일 첫 간조로 넘겨요 — 밤에 켜서 내일 계획을
+ * 보는 사람도 있으니까요. 그럴 땐 "내일"임을 문구에 밝혀요.
+ */
+export function inflowLabel(
+  activity: ActivityKey,
+  record: ActivityRecord,
+  events: Event[],
+  tomorrowEvents: Event[],
+  nowMin: number,
+  pointName: string,
+  stationName: string,
+): InflowLabel | null {
+  if (!NEEDS_INFLOW_WARNING.has(activity)) return null;
+
+  if (activity === "갯벌체험") {
+    if (!record.end) return null;
+    return {
+      line1: `${pointName} 갯벌 기준 · ${record.end} 무렵부터 물이 들어와요`,
+      line2: record.begin ? `체험 가능 ${record.begin}~${record.end}` : undefined,
+    };
+  }
+
+  const low = nextLowTide(events, nowMin);
+  if (low != null) return { line1: `${stationName} 기준 · ${formatTime(low.t)} 간조 이후부터 물이 들어와요` };
+
+  const tomorrowLow = nextLowTide(tomorrowEvents, -1);
+  if (tomorrowLow != null) {
+    return { line1: `${stationName} 기준 · 내일 ${formatTime(tomorrowLow.t)} 간조 이후부터 물이 들어와요` };
+  }
+  return null;
+}
+
 /* ------------------------------------------------------------------ */
 /* 이안류 — 다른 8종과 성격이 달라요. 예보가 아니라 실측치, 지점은 10곳뿐,   */
 /* 6~9월만 서비스돼요. 그래서 캐시도 안 하고 매번 최신 한 건만 받아요.      */
@@ -407,6 +451,25 @@ export function demo(): void {
   eq(isRipUrgent("경계"), true, "경계도 강조");
   eq(isRipUrgent("주의"), false, "주의는 강조 안 함");
   eq(isRipUrgent("관심"), false, "관심도 강조 안 함");
+
+  // 물 들어오는 시각 — 지점명 표기, 내일 간조 넘김
+  const mudflatRecord: ActivityRecord = { ymd: today, noon: null, grade: "좋음", wave: null, temp: null, begin: "16:30", end: "18:00" };
+  const mudflatInflow = inflowLabel("갯벌체험", mudflatRecord, [], [], 0, "백사마을", "사초항");
+  eq(mudflatInflow?.line1, "백사마을 갯벌 기준 · 18:00 무렵부터 물이 들어와요", "갯벌은 지점명을 밝힘");
+  eq(mudflatInflow?.line2, "체험 가능 16:30~18:00", "체험 가능 시간은 둘째 줄");
+
+  const beachRecord: ActivityRecord = { ymd: today, noon: null, grade: "좋음", wave: 0.3, temp: 27 };
+  const todayLow = [{ t: "1509", cm: 15, hl: "L" as const }];
+  const beachInflow = inflowLabel("해수욕", beachRecord, todayLow, [], 0, "", "사초항");
+  eq(beachInflow?.line1, "사초항 기준 · 15:09 간조 이후부터 물이 들어와요", "해수욕은 관측소명을 밝힘");
+
+  // 오늘 간조가 다 지났으면(늦은 밤) 내일 첫 간조로 넘어감
+  const tomorrowLow = [{ t: "0612", cm: 20, hl: "L" as const }];
+  const overnight = inflowLabel("해수욕", beachRecord, todayLow, tomorrowLow, 23 * 60, "", "사초항");
+  eq(overnight?.line1, "사초항 기준 · 내일 06:12 간조 이후부터 물이 들어와요", "밤엔 내일 간조로 넘어가고 '내일'을 밝힘");
+
+  // 내일 것도 없으면(정말 드물게) 조용히 null
+  eq(inflowLabel("해수욕", beachRecord, todayLow, [], 23 * 60, "", "사초항"), null, "낼 것도 없으면 null");
 
   console.log("activities.ts OK");
 }

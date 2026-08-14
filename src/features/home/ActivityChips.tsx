@@ -5,9 +5,9 @@ import { Card } from "../../components/ScreenLayout";
 import { EVENT, track } from "../../lib/analytics";
 import {
   ACTIVITY_LABEL,
-  NEEDS_INFLOW_WARNING,
   formatYmd,
   indexHeadline,
+  inflowLabel,
   isRipUrgent,
   lastActivity,
   loadActivity,
@@ -22,7 +22,7 @@ import {
   type RipRecord,
 } from "../../lib/activities";
 import type { LatLng } from "../../lib/geo";
-import { formatTime, nextLowTide, type Event } from "../../lib/tide";
+import type { Event } from "../../lib/tide";
 import { palette } from "../../theme";
 
 type ActState =
@@ -38,11 +38,14 @@ type ActState =
 export function ActivityChips({
   coords,
   events,
+  tomorrowEvents,
   nowMin,
   stationName,
 }: {
   coords: LatLng | null;
   events: Event[];
+  /** 오늘 간조가 이미 다 지났을 때(늦은 밤) 내일 첫 간조로 넘어가는 용도예요. */
+  tomorrowEvents: Event[];
   nowMin: number;
   /** 위 물때표가 어느 관측소 기준인지 — 갯벌·해수욕 지점과 다를 수 있어 시각 안내에 같이 써요. */
   stationName: string;
@@ -143,6 +146,7 @@ export function ActivityChips({
               record={state.record}
               pointName={state.pointName}
               events={events}
+              tomorrowEvents={tomorrowEvents}
               nowMin={nowMin}
               stationName={stationName}
             />
@@ -191,6 +195,7 @@ function ActivityDetail({
   record,
   pointName,
   events,
+  tomorrowEvents,
   nowMin,
   stationName,
 }: {
@@ -198,6 +203,7 @@ function ActivityDetail({
   record: ActivityRecord;
   pointName: string;
   events: Event[];
+  tomorrowEvents: Event[];
   nowMin: number;
   stationName: string;
 }) {
@@ -209,7 +215,7 @@ function ActivityDetail({
   if (activity === "서핑" && record.grade2) bits.push(`난이도 ${record.grade2}`);
   if (activity === "해수욕" && record.open) bits.push(record.open === "개장" ? "개장 중" : record.open);
 
-  const inflow = inflowLabel(activity, record, events, nowMin, pointName, stationName);
+  const inflow = inflowLabel(activity, record, events, tomorrowEvents, nowMin, pointName, stationName);
 
   return (
     <div>
@@ -218,40 +224,19 @@ function ActivityDetail({
         <p style={{ fontSize: 15, color: palette.sub, margin: "6px 0 0" }}>{bits.join(" · ")}</p>
       )}
       {inflow != null && (
-        <p style={{ fontSize: 15, fontWeight: 700, color: palette.primaryDeep, margin: "10px 0 0" }}>
-          {inflow}
-        </p>
+        <div style={{ marginTop: 10 }}>
+          <p style={{ fontSize: 15, fontWeight: 700, color: palette.primaryDeep, margin: 0 }}>
+            {inflow.line1}
+          </p>
+          {inflow.line2 != null && (
+            <p style={{ fontSize: 14, color: palette.sub, margin: "2px 0 0" }}>{inflow.line2}</p>
+          )}
+        </div>
       )}
     </div>
   );
 }
 
-/**
- * 물이 들어오면 위험해지는 활동만 — 언제까지 나와야 하는지 안내예요.
- * 갯벌 지점과 위 물때표의 관측소는 서로 다른 곳이라 시각이 다를 수 있어요. 그래서
- * "어디 기준 시각인지"를 문구에 꼭 넣어요 — 안 넣으면 두 시각을 헷갈려서 고립 사고로
- * 이어질 수 있습니다.
- */
-function inflowLabel(
-  activity: ActivityKey,
-  record: ActivityRecord,
-  events: Event[],
-  nowMin: number,
-  pointName: string,
-  stationName: string,
-): string | null {
-  if (!NEEDS_INFLOW_WARNING.has(activity)) return null;
-
-  if (activity === "갯벌체험") {
-    if (!record.end) return null;
-    const range = record.begin ? ` (체험 가능 ${record.begin}~${record.end})` : "";
-    return `물 들어오는 시각 · ${pointName} 기준 ${record.end} 무렵부터${range}`;
-  }
-
-  const low = nextLowTide(events, nowMin);
-  if (low == null) return null;
-  return `물 들어오는 시각 · ${stationName} 물때 기준 ${formatTime(low.t)} 간조 이후부터`;
-}
 
 function Chip({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
   return (
