@@ -4,7 +4,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ImageBannerAd } from "../../components/BannerAd";
 import { Card } from "../../components/ScreenLayout";
 import { EVENT, track, trackScreen } from "../../lib/analytics";
-import type { LatLng } from "../../lib/geo";
 import {
   favoriteIds,
   lastStation,
@@ -38,8 +37,8 @@ export function HomeScreen() {
   const [picking, setPicking] = useState(false);
   const [dayOffset, setDayOffset] = useState(0);
   const [favIds, setFavIds] = useState<string[]>(() => favoriteIds());
-  // 활동 칩 20km 판정에만 써요 — 위치를 못 얻으면 칩 자체를 숨깁니다.
-  const [coords, setCoords] = useState<LatLng | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
 
   const pick = useCallback(async (id: string, stations: Station[]) => {
     const tide = await loadTide(id);
@@ -47,6 +46,17 @@ export function HomeScreen() {
     track(EVENT.stationPicked, { station: tide.station.name });
     setPhase({ k: "ready", stations, tide });
   }, []);
+
+  /** 지금 위치에서 가장 가까운 항으로. 못 찾으면 그냥 던져요 — 호출한 쪽에서 대비책을 정합니다. */
+  const locateNearest = useCallback(
+    async (stations: Station[]) => {
+      const loc = await Device.getLocation({ accuracy: 3 });
+      const me = { lat: loc.coords.latitude, lng: loc.coords.longitude };
+      const near = nearestStation(me, stations);
+      await pick((near ?? stations[0]).id, stations);
+    },
+    [pick],
+  );
 
   const boot = useCallback(async () => {
     setPhase({ k: "loading" });
@@ -61,11 +71,7 @@ export function HomeScreen() {
       // 위치를 막으면 마지막에 고른 항으로 — 물때를 보러 온 사람을 권한 화면
       // 앞에 세워두면 안 돼요.
       try {
-        const loc = await Device.getLocation({ accuracy: 3 });
-        const me = { lat: loc.coords.latitude, lng: loc.coords.longitude };
-        setCoords(me);
-        const near = nearestStation(me, stations);
-        await pick((near ?? stations[0]).id, stations);
+        await locateNearest(stations);
         return;
       } catch {
         // 위치를 못 쓸 때의 대비책
@@ -81,12 +87,27 @@ export function HomeScreen() {
     } catch {
       setPhase({ k: "error", message: "물때표를 불러오지 못했어요." });
     }
-  }, [pick]);
+  }, [pick, locateNearest]);
 
   useEffect(() => {
     trackScreen("home");
     void boot();
   }, [boot]);
+
+  /**
+   * "다시 찾기". 앱을 안 끄고 이동했을 수 있으니 지금 위치로 다시 잡아요.
+   * 마지막 선택·즐겨찾기와 무관하게 항상 지금 위치 기준입니다. 실패해도 보고
+   * 있던 화면은 그대로 두고 실패만 알려요 — 빈 화면이 되면 안 돼요.
+   */
+  const refresh = useCallback(() => {
+    if (refreshing || phase.k !== "ready") return; // 연타 방지
+    setRefreshing(true);
+    setRefreshError(null);
+    void locateNearest(phase.stations)
+      .then(() => setDayOffset(0))
+      .catch(() => setRefreshError("위치를 다시 잡지 못했어요."))
+      .finally(() => setRefreshing(false));
+  }, [refreshing, phase, locateNearest]);
 
   // 화살표로 어제·내일을 보면 그 날짜는 아직 안 받아온 상태라 API를 한 번 더 불러요.
   useEffect(() => {
@@ -151,23 +172,43 @@ export function HomeScreen() {
   return (
     <Pad>
       {/* ------------------------------------------------- 관측소 선택 */}
-      <button
-        onClick={() => setPicking((v) => !v)}
-        style={{
-          border: "none",
-          background: "transparent",
-          padding: 0,
-          display: "flex",
-          alignItems: "center",
-          gap: 6,
-          marginBottom: 4,
-        }}
-      >
-        <span style={{ fontSize: 24, fontWeight: 800, color: palette.ink }}>
-          {tide.station.name}
-        </span>
-        <span style={{ fontSize: 16, color: palette.sub }}>{picking ? "▲" : "▼"}</span>
-      </button>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+        <button
+          onClick={() => setPicking((v) => !v)}
+          style={{
+            border: "none",
+            background: "transparent",
+            padding: 0,
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+          }}
+        >
+          <span style={{ fontSize: 24, fontWeight: 800, color: palette.ink }}>
+            {tide.station.name}
+          </span>
+          <span style={{ fontSize: 16, color: palette.sub }}>{picking ? "▲" : "▼"}</span>
+        </button>
+
+        <button
+          onClick={refresh}
+          disabled={refreshing}
+          style={{
+            border: "none",
+            borderRadius: 10,
+            padding: "8px 12px",
+            fontSize: 14,
+            fontWeight: 700,
+            color: refreshing ? palette.sub : palette.primary,
+            background: "rgba(22,104,184,0.10)",
+          }}
+        >
+          {refreshing ? "찾는 중…" : "다시 찾기"}
+        </button>
+      </div>
+      {refreshError != null && (
+        <p style={{ fontSize: 12, color: palette.low, margin: "0 0 4px" }}>{refreshError}</p>
+      )}
 
       {picking && (
         <Card style={{ padding: 8, marginBottom: 12 }}>
@@ -232,8 +273,11 @@ export function HomeScreen() {
           </Card>
 
           {/* ------------------------------------------- 활동별 오늘 여건 */}
+          {/* 활동 지점은 "화면에 뜬 항" 기준이에요 — 물때는 가기 전에 미리 보는
+              앱이라, 내 실제 위치가 아니라 지금 보고 있는 항(예: 서울 사는 사람이
+              태안으로 바꿔 본 경우) 근처 활동을 보여줘야 해요. */}
           <ActivityChips
-            coords={coords}
+            coords={{ lat: tide.station.lat, lng: tide.station.lng }}
             events={todayEvents}
             tomorrowEvents={tomorrowEvents}
             nowMin={todayNowMin}

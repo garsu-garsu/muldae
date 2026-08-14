@@ -43,6 +43,7 @@ export function ActivityChips({
   nowMin,
   stationName,
 }: {
+  /** "화면에 뜬 항"의 좌표예요(내 실제 위치가 아니라) — 태안 항을 보고 있으면 태안 근처 활동을 찾습니다. */
   coords: LatLng | null;
   events: Event[];
   /** 오늘 간조가 이미 다 지났을 때(늦은 밤) 내일 첫 간조로 넘어가는 용도예요. */
@@ -55,9 +56,14 @@ export function ActivityChips({
   const [state, setState] = useState<ActState>({ k: "idle" });
   const [rip, setRip] = useState<RipRecord | null>(null);
 
-  const visible = useMemo(() => (coords == null ? [] : visibleActivities(coords)), [coords]);
+  // coords는 HomeScreen에서 매 렌더마다 새로 만든 객체라 참조가 안 바뀌길 기대하면
+  // 안 돼요. 값이 실제로 바뀌었을 때만(=항이 바뀌었을 때만) 아래 effect들이 다시
+  // 돌게, 좌표를 문자열 키로 바꿔서 의존성에 씁니다.
+  const coordsKey = coords == null ? null : `${coords.lat},${coords.lng}`;
 
-  // 위치를 처음 얻은 뒤 — 지난번에 고른 활동이 이번에도 보이면 그대로 이어가요.
+  const visible = useMemo(() => (coords == null ? [] : visibleActivities(coords)), [coordsKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 항이 바뀐 뒤 — 지난번에 고른 활동이 새 항에도 있으면 그대로 이어가고, 없으면 풀어요.
   useEffect(() => {
     if (coords == null || visible.length === 0) return;
     setSelected((cur) => {
@@ -65,7 +71,7 @@ export function ActivityChips({
       const saved = lastActivity();
       return saved != null && visible.includes(saved) ? saved : null;
     });
-  }, [coords, visible]);
+  }, [coordsKey, visible]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (selected == null || coords == null) {
@@ -90,7 +96,7 @@ export function ActivityChips({
     return () => {
       alive = false;
     };
-  }, [selected, coords]);
+  }, [selected, coordsKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // 이안류 — 해수욕·스킨스쿠버를 골랐고 20km 안에 관측 지점이 있을 때만.
   // 예보가 아니라 실측치라 별도 캐시 없이 매번 최신 한 건만 받아요.
@@ -110,7 +116,7 @@ export function ActivityChips({
     return () => {
       alive = false;
     };
-  }, [selected, coords]);
+  }, [selected, coordsKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (visible.length === 0) return null;
 

@@ -462,6 +462,15 @@ export function demo(): void {
   const far = nearestActivityPoint({ lat: 37.5665, lng: 126.978 }, "갯벌체험"); // 서울시청
   eq(far, null, "20km 밖이면 null");
 
+  // "항을 바꾸면 활동 목록도 그 항 기준으로 바뀐다" — 화면은 내 실제 위치가 아니라
+  // 선택된 관측소 좌표를 넘겨요. 서울시청(내륙)에선 활동이 하나도 안 잡혀야 하고,
+  // 부산항(DT_0005, stations-index.ts) 좌표를 넣으면 근처 활동이 잡혀야 합니다.
+  const seoulActivities = visibleActivities({ lat: 37.5665, lng: 126.978 });
+  eq(seoulActivities, [], "내륙 좌표(서울시청)는 활동이 하나도 안 잡힘");
+  const busanActivities = visibleActivities({ lat: 35.09638, lng: 129.03527 });
+  if (busanActivities.length === 0) throw new Error("부산항 좌표를 넣었는데 활동이 하나도 안 잡힘");
+  if (!busanActivities.includes("해수욕")) throw new Error("부산항 좌표인데 해수욕(해운대 인근)이 안 잡힘");
+
   // 지수 등급 → 한 줄
   eq(indexHeadline("갯바위낚시", "매우좋음"), "오늘 갯바위낚시하기 아주 좋아요", "매우좋음");
   eq(indexHeadline("서핑", "나쁨"), "오늘 서핑하기 별로예요", "나쁨");
