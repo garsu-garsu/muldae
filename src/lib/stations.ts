@@ -1,48 +1,73 @@
 import { distanceM, type LatLng } from "./geo";
+import { DATA_KEY } from "./env";
+import { STATIONS } from "./stations-index";
 import type { Station, StationTide, Event } from "./tide";
 
-/** 빌드 때 구운 정적 파일. 런타임에 외부 API를 부르지 않아요. */
-const INDEX_URL = "/data/tide/index.json";
-const STATION_URL = (id: string) => `/data/tide/${id}.json`;
+/**
+ * 국립해양조사원 조석예보 API를 런타임에 직접 부릅니다.
+ * 관측소 목록과 사리/조금 판정 기준선(rangeP25/P75)은 scripts/build-stations.mjs 로
+ * 미리 구운 stations-index.ts 표를 씁니다 — 조석은 결정론적이라 해가 바뀌어도
+ * 거의 안 변해요. 그날그날의 만조·간조 시각만 API로 받아 메모리에 캐시합니다.
+ */
+const BASE = "https://apis.data.go.kr/1192136/tideFcstHghLw/GetTideFcstHghLwApiService";
 
 const LAST_KEY = "muldae:last-station";
 
-let indexCache: Station[] | null = null;
-
 export async function loadStations(): Promise<Station[]> {
-  if (indexCache != null) return indexCache;
-  const res = await fetch(INDEX_URL);
-  if (!res.ok) throw new Error("관측소 목록을 읽지 못했어요");
-  indexCache = (await res.json()) as Station[];
-  return indexCache;
+  return STATIONS.map(([id, name, lat, lng]) => ({ id, name, lat, lng }));
 }
 
-/** 파일에는 배열로 눌러 담겨 있어요. 앱에서 쓸 모양으로 폅니다. */
-type RawEvent = [string, number, "H" | "L"];
-interface RawTide {
-  station: Station;
-  rangeP25: number;
-  rangeP75: number;
-  days: Record<string, RawEvent[]>;
+const rangeById = new Map(STATIONS.map(([id, , , , p25, p75]) => [id, { p25, p75 }] as const));
+
+/** 관측소:날짜 별로 한 번 부른 건 다시 안 불러요. */
+const dayCache = new Map<string, Event[]>();
+
+async function fetchDay(id: string, ymd: string): Promise<Event[]> {
+  const cacheKey = `${id}:${ymd}`;
+  const hit = dayCache.get(cacheKey);
+  if (hit != null) return hit;
+
+  const url =
+    `${BASE}?serviceKey=${DATA_KEY}&obsCode=${id}&reqDate=${ymd}` +
+    `&numOfRows=300&type=json`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error("물때표를 읽지 못했어요");
+  const json: unknown = await res.json();
+  const raw = (json as { body?: { items?: { item?: unknown } } })?.body?.items?.item;
+  const items: Record<string, unknown>[] = raw == null ? [] : ([] as unknown[]).concat(raw) as Record<string, unknown>[];
+  const events = items
+    .map((it) => {
+      const hhmm = String(it.predcDt ?? "").slice(11, 16).replace(":", "");
+      return {
+        t: hhmm,
+        cm: Math.round(Number(it.predcTdlvVl)),
+        hl: (Number(it.extrSe) % 2 === 1 ? "H" : "L") as Event["hl"], // 1·3=고조, 2·4=저조
+      };
+    })
+    .filter((e) => /^\d{4}$/.test(e.t) && Number.isFinite(e.cm))
+    .sort((a, b) => a.t.localeCompare(b.t));
+
+  dayCache.set(cacheKey, events);
+  return events;
 }
 
 const tideCache = new Map<string, StationTide>();
 
-export async function loadTide(id: string): Promise<StationTide> {
-  const hit = tideCache.get(id);
-  if (hit != null) return hit;
-  const res = await fetch(STATION_URL(id));
-  if (!res.ok) throw new Error("물때표를 읽지 못했어요");
-  const raw = (await res.json()) as RawTide;
-  const days: Record<string, Event[]> = {};
-  for (const [ymd, list] of Object.entries(raw.days)) {
-    days[ymd] = list.map(([t, cm, hl]) => ({ t, cm, hl }));
-  }
+/** 한 관측소의 물때. date 를 안 주면 오늘이에요. 이미 받은 날짜는 다시 안 부릅니다. */
+export async function loadTide(id: string, date: Date = new Date()): Promise<StationTide> {
+  const station = (await loadStations()).find((s) => s.id === id);
+  if (station == null) throw new Error("모르는 관측소예요");
+
+  const ymd = todayKey(date);
+  const events = await fetchDay(id, ymd.replace(/-/g, ""));
+  const range = rangeById.get(id) ?? { p25: 0, p75: 0 };
+
+  const prev = tideCache.get(id);
   const out: StationTide = {
-    station: raw.station,
-    rangeP25: raw.rangeP25,
-    rangeP75: raw.rangeP75,
-    days,
+    station,
+    rangeP25: range.p25,
+    rangeP75: range.p75,
+    days: { ...(prev?.days ?? {}), [ymd]: events },
   };
   tideCache.set(id, out);
   return out;
@@ -75,7 +100,7 @@ export function lastStation(): string | null {
   }
 }
 
-/** 오늘 날짜(한국 기준). 파일 키와 같은 형식이에요. */
+/** 오늘 날짜(한국 기준). API 요청 키와 같은 형식이에요. */
 export function todayKey(d = new Date()): string {
   const p = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;

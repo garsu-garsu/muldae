@@ -79,6 +79,23 @@ export function HomeScreen() {
     void boot();
   }, [boot]);
 
+  // 화살표로 어제·내일을 보면 그 날짜는 아직 안 받아온 상태라 API를 한 번 더 불러요.
+  useEffect(() => {
+    if (phase.k !== "ready") return;
+    const date = new Date();
+    date.setDate(date.getDate() + dayOffset);
+    const key = todayKey(date);
+    if (phase.tide.days[key] != null) return;
+
+    let alive = true;
+    void loadTide(phase.tide.station.id, date).then((tide) => {
+      if (alive) setPhase((p) => (p.k === "ready" ? { ...p, tide } : p));
+    });
+    return () => {
+      alive = false;
+    };
+  }, [dayOffset, phase]);
+
   if (phase.k === "loading") return <Pad><Note text="물때표를 불러오는 중이에요…" /></Pad>;
   if (phase.k === "error")
     return (
