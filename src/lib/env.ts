@@ -3,6 +3,8 @@
 export const AD_GROUP_ID_BANNER = import.meta.env?.VITE_AD_GROUP_ID_BANNER ?? "";
 export const AD_GROUP_ID_BANNER_IMAGE =
   import.meta.env?.VITE_AD_GROUP_ID_BANNER_IMAGE ?? "";
+/** 리워드 광고 — "이번 주 좋은 시간대" 를 열 때만 씀. */
+export const AD_GROUP_ID_REWARDED = import.meta.env?.VITE_AD_GROUP_ID_REWARDED ?? "";
 
 /**
  * 공공데이터포털 인증키. 서버 없이 브라우저에서 조석예보 API를 바로 부르기

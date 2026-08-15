@@ -172,9 +172,8 @@ export function HomeScreen() {
   const ts = tierStyle(t);
   const now = new Date();
   const nowMin = dayOffset === 0 ? now.getHours() * 60 + now.getMinutes() : 0;
-  // 활동 지수는 날짜 화살표와 상관없이 항상 "오늘" 기준이에요.
-  const todayEvents = tide.days[todayKey()] ?? [];
-  const todayNowMin = now.getHours() * 60 + now.getMinutes();
+  // 활동 카드도 이제 날짜 화살표를 따라가요(오늘 이후는 광고로 잠김) — 늦은 밤
+  // 오늘 간조가 다 지났을 때만 내일 것으로 넘어가는 용도로 tomorrowEvents를 남겨둬요.
   const tomorrow = new Date();
   tomorrow.setDate(tomorrow.getDate() + 1);
   const tomorrowEvents = tide.days[todayKey(tomorrow)] ?? [];
@@ -322,16 +321,20 @@ export function HomeScreen() {
             ))}
           </Card>
 
-          {/* ------------------------------------------- 활동별 오늘 여건 */}
+          {/* ------------------------------------------- 활동별 여건 */}
           {/* 활동 지점은 "화면에 뜬 항" 기준이에요 — 물때는 가기 전에 미리 보는
               앱이라, 내 실제 위치가 아니라 지금 보고 있는 항(예: 서울 사는 사람이
-              태안으로 바꿔 본 경우) 근처 활동을 보여줘야 해요. */}
+              태안으로 바꿔 본 경우) 근처 활동을 보여줘야 해요. 날짜는 위 화살표를
+              따라가되, 오늘 이후는 광고로 잠겨요(ActivityChips 안에서 처리). */}
           <ActivityChips
             coords={{ lat: tide.station.lat, lng: tide.station.lng }}
-            events={todayEvents}
+            events={events}
             tomorrowEvents={tomorrowEvents}
-            nowMin={todayNowMin}
+            nowMin={nowMin}
             stationName={tide.station.name}
+            stationId={tide.station.id}
+            selectedYmd={key}
+            isToday={dayOffset === 0}
           />
         </>
       )}

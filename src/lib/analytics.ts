@@ -33,9 +33,13 @@ export function trackScreen(name: string, params: Params = {}): void {
 
 export const EVENT = {
   adBannerImpression: "ad_banner_impression",
+  adRewarded: "ad_rewarded",
   shareCompleted: "share_completed",
   // 앱 고유
   stationPicked: "station_picked",
   dayChanged: "day_changed",
   activityPicked: "activity_picked",
+  // 리워드로 여는 것들(내일 이후 활동 지수 + 이번 주 좋은 시간대) — 하루 한 번 같이 열려요.
+  premiumClicked: "premium_clicked",
+  premiumUnlocked: "premium_unlocked",
 } as const;

@@ -158,6 +158,16 @@ export interface ActivityRecord {
   grade2?: string;
 }
 
+/** "파도 0.5m 안팎 · 수온 27도 정도" 류의 근거 한 줄 조각들. 오늘 카드·주간 베스트가 같이 써요. */
+export function activityBits(activity: ActivityKey, record: ActivityRecord): string[] {
+  const bits: string[] = [];
+  if (record.wave != null) bits.push(`파도 ${record.wave}m 안팎`);
+  if (record.temp != null) bits.push(`수온 ${Math.round(record.temp)}도 정도`);
+  if (activity === "서핑" && record.grade2) bits.push(`난이도 ${record.grade2}`);
+  if (activity === "해수욕" && record.open) bits.push(record.open === "개장" ? "개장 중" : record.open);
+  return bits;
+}
+
 function num(v: unknown): number | null {
   const n = Number(v);
   return Number.isFinite(n) ? n : null;
@@ -172,6 +182,18 @@ function avg(a: unknown, b: unknown): number | null {
   return Math.round(((x + y) / 2) * 10) / 10;
 }
 
+/**
+ * 갯벌체험·바다갈라짐 시각 필드. 정부 API가 "체험/통행 불가"(totalIndex가 그렇게
+ * 나올 때)엔 실제 시각 대신 00:00~00:00 더미값을 줘요(khoa-probe.md류 확인 없이도
+ * 실측: 백사마을 2026-08-16 totalIndex "체험불가" → begin/end 둘 다 "00:00"). 진짜
+ * 자정 시각이 아니라 "값 없음" 표시라, 그대로 두면 "00:00부터 물이 들어와요" 같은
+ * 안전 정보에 쓰레기 값이 뜨니 빈 문자열로 지워서 inflowLabel의 `!record.end` 가드가
+ * 자동으로 줄 자체를 안 보여주게 해요.
+ */
+function realWindow(begin: string, end: string): { begin: string; end: string } {
+  return begin === "00:00" && end === "00:00" ? { begin: "", end: "" } : { begin, end };
+}
+
 function parseRecord(key: ActivityKey, it: Record<string, unknown>): ActivityRecord {
   const base = {
     ymd: String(it.predcYmd ?? ""),
@@ -182,10 +204,12 @@ function parseRecord(key: ActivityKey, it: Record<string, unknown>): ActivityRec
     grade: String(it.totalIndex ?? ""),
   };
   if (key === "갯벌체험") {
-    return { ...base, wave: null, temp: null, begin: String(it.mdftExprnBgngTm ?? ""), end: String(it.mdftExprnEndTm ?? "") };
+    const { begin, end } = realWindow(String(it.mdftExprnBgngTm ?? ""), String(it.mdftExprnEndTm ?? ""));
+    return { ...base, wave: null, temp: null, begin, end };
   }
   if (key === "바다갈라짐") {
-    return { ...base, wave: null, temp: null, begin: String(it.splocBgngDt ?? ""), end: String(it.splocEndDt ?? "") };
+    const { begin, end } = realWindow(String(it.splocBgngDt ?? ""), String(it.splocEndDt ?? ""));
+    return { ...base, wave: null, temp: null, begin, end };
   }
   if (key === "해수욕") {
     return { ...base, wave: num(it.maxWvhgt), temp: num(it.avgWtem), open: String(it.opnStat ?? "") };
@@ -327,10 +351,74 @@ export function pickCurrent(records: ActivityRecord[]): ActivityRecord | null {
   return day.find((r) => r.noon === half) ?? day.find((r) => r.noon === null) ?? day[0];
 }
 
+/**
+ * "내일 이후"처럼 날짜 화살표로 골라 본 특정 날짜의 레코드. pickCurrent와 달리
+ * 낡은 캐시 대신 최근 날짜로 넘어가는 보정을 안 해요 — 사용자가 고른 그 날짜가
+ * 없으면 그냥 null(그 날짜엔 지수가 없다는 뜻)이에요.
+ */
+export function pickForDate(records: ActivityRecord[], ymd: string): ActivityRecord | null {
+  const day = records.filter((r) => r.ymd === ymd);
+  if (day.length === 0) return null;
+  const half = ymd === todayYmd() && new Date().getHours() >= 12 ? "오후" : "오전";
+  return day.find((r) => r.noon === half) ?? day.find((r) => r.noon === null) ?? day[0];
+}
+
 /** "2026-08-14" → "8월 14일". */
 export function formatYmd(ymd: string): string {
   const [, m, d] = ymd.split("-");
   return `${Number(m)}월 ${Number(d)}일`;
+}
+
+const WEEKDAY = ["일", "월", "화", "수", "목", "금", "토"];
+
+/** "2026-08-14" → "8월 14일 (금)". */
+export function formatYmdWeekday(ymd: string): string {
+  const [y, m, d] = ymd.split("-").map(Number);
+  return `${formatYmd(ymd)} (${WEEKDAY[new Date(y, m - 1, d).getDay()]})`;
+}
+
+/** 등급이 좋을수록 큰 점수. 모르는 값(빈 문자열 등)은 0으로 맨 뒤. */
+const GRADE_SCORE: Record<string, number> = {
+  매우좋음: 5,
+  좋음: 4,
+  보통: 3,
+  나쁨: 2,
+  매우나쁨: 1,
+};
+
+/** "보통" 이상이면 괜찮은 날. "이번 주 좋은 시간대" 제목이 실제 등급과 어긋나지 않으려고 써요. */
+export function isGoodEnough(grade: string): boolean {
+  return (GRADE_SCORE[grade] ?? 0) >= GRADE_SCORE["보통"];
+}
+
+/** 날짜+오전/오후를 비교 가능한 문자열로. 정렬용 — 표시용이 아니에요. */
+function timeKey(r: ActivityRecord): string {
+  return `${r.ymd}${r.noon === "오후" ? 1 : 0}`;
+}
+
+/**
+ * 이번 주(오늘부터 API가 주는 7일) 중 가장 좋은 시간대 상위 N개.
+ * 등급 좋은 순 → 등급이 같으면 가까운 날짜(더 이른 시간대) 순. 뱃멀미도 등급값의
+ * 방향은 동일(매우좋음=쾌적)이라 활동별로 다르게 정렬할 필요가 없어요.
+ *
+ * 같은 날짜·오전/오후에 원본 API가 행을 중복으로 주는 지점이 있어(예: 갯바위낚시
+ * "신지도" — 같은 시간대에 등급이 다른 행이 여럿). 그대로 두면 3자리 중 둘이 같은
+ * 시간대가 되어버려서, 시간대별로 하나만(그중 더 좋은 등급) 남기고 순위를 매겨요.
+ * ponytail: 등급만 보고 고름 — 파고·수온까지 합쳐 대표값을 만들려면 더 손이 가요.
+ */
+export function rankWeekly(records: ActivityRecord[], limit = 3): ActivityRecord[] {
+  const byTime = new Map<string, ActivityRecord>();
+  for (const r of records) {
+    const k = timeKey(r);
+    const prev = byTime.get(k);
+    if (prev == null || (GRADE_SCORE[r.grade] ?? 0) > (GRADE_SCORE[prev.grade] ?? 0)) byTime.set(k, r);
+  }
+  return [...byTime.values()]
+    .sort((a, b) => {
+      const byGrade = (GRADE_SCORE[b.grade] ?? 0) - (GRADE_SCORE[a.grade] ?? 0);
+      return byGrade !== 0 ? byGrade : timeKey(a).localeCompare(timeKey(b));
+    })
+    .slice(0, limit);
 }
 
 export interface InflowLabel {
@@ -498,6 +586,25 @@ export function demo(): void {
   eq(mudflat.begin, "11:10", "갯벌 체험 시작");
   eq(mudflat.end, "13:10", "갯벌 체험 종료(=물 들어오는 시각)");
 
+  // 체험불가일 때 API가 00:00~00:00 더미값을 줘요 — 실제 시각이 아니니 빈 값으로 지워야 해요.
+  const impossible = parseRecord("갯벌체험", {
+    predcYmd: "2026-08-16",
+    totalIndex: "체험불가",
+    mdftExprnBgngTm: "00:00",
+    mdftExprnEndTm: "00:00",
+  });
+  eq(impossible.begin, "", "체험불가는 시작 시각도 빈 값");
+  eq(impossible.end, "", "체험불가는 종료 시각도 빈 값");
+  eq(inflowLabel("갯벌체험", impossible, [], [], 0, "백사마을", "사초항"), null, "00:00 더미값은 안전 정보 줄 자체가 안 뜸");
+
+  const splitImpossible = parseRecord("바다갈라짐", {
+    predcYmd: "2026-08-16",
+    totalIndex: "매우나쁨",
+    splocBgngDt: "00:00",
+    splocEndDt: "00:00",
+  });
+  eq(splitImpossible.end, "", "바다갈라짐도 같은 더미값을 지움");
+
   // 오늘 중 오전/오후 선택 — todayYmd()가 실행 시각 기준이라 날짜를 하드코딩하면
   // 다음 날 이 점검이 깨져요. 같은 방식으로 "오늘"을 직접 구해서 써요.
   const today = todayYmd();
@@ -571,6 +678,45 @@ export function demo(): void {
   // 바다갈라짐만 동사가 다름("구경하기") — 나머지는 "{label}하기" 그대로.
   eq(indexHeadline("바다갈라짐", "좋음"), "오늘 바다갈라짐 구경하기 좋아요", "바다갈라짐은 구경하기");
   eq(indexHeadline("선상낚시", "좋음"), "오늘 선상낚시하기 좋아요", "선상낚시는 기본 동사");
+
+  // 이번 주 좋은 시간대 — 등급 좋은 순, 동점이면 가까운 날짜가 앞서야 해요.
+  const weekly: ActivityRecord[] = [
+    { ymd: "2026-08-14", noon: "오전", grade: "보통", wave: null, temp: null },
+    { ymd: "2026-08-14", noon: "오후", grade: "매우좋음", wave: null, temp: null },
+    { ymd: "2026-08-15", noon: "오전", grade: "매우좋음", wave: null, temp: null },
+    { ymd: "2026-08-15", noon: "오후", grade: "나쁨", wave: null, temp: null },
+    { ymd: "2026-08-16", noon: "오전", grade: "좋음", wave: null, temp: null },
+  ];
+  const ranked = rankWeekly(weekly);
+  eq(ranked.length, 3, "상위 3개만 뽑힘");
+  eq(`${ranked[0].ymd} ${ranked[0].noon}`, "2026-08-14 오후", "매우좋음 동점 중 더 이른 시간대가 1등");
+  eq(`${ranked[1].ymd} ${ranked[1].noon}`, "2026-08-15 오전", "매우좋음 동점 중 나머지가 2등");
+  eq(`${ranked[2].ymd} ${ranked[2].noon}`, "2026-08-16 오전", "좋음 등급이 3등");
+  eq(rankWeekly(weekly.slice(0, 2)).length, 2, "데이터가 3개 미만이면 있는 만큼만");
+  eq(rankWeekly([]).length, 0, "레코드가 없으면 빈 배열");
+
+  // 원본 API가 같은 날짜·시간대에 행을 중복으로 주는 지점이 있어요(신지도 등) —
+  // 시간대당 하나만(더 좋은 등급) 남아야 top3가 진짜 3개의 다른 시간대가 돼요.
+  const dupTime: ActivityRecord[] = [
+    { ymd: "2026-08-15", noon: "오전", grade: "좋음", wave: null, temp: null },
+    { ymd: "2026-08-15", noon: "오전", grade: "보통", wave: null, temp: null },
+    { ymd: "2026-08-16", noon: "오전", grade: "나쁨", wave: null, temp: null },
+  ];
+  const dedup = rankWeekly(dupTime);
+  eq(dedup.length, 2, "같은 시간대 중복은 하나로 합쳐짐");
+  eq(dedup[0].grade, "좋음", "중복 중 더 좋은 등급이 남음");
+
+  // 날짜 화살표로 고른 특정 날짜 — pickCurrent와 달리 낡은 캐시로 안 넘어가요.
+  eq(pickForDate(weekly, "2026-08-16")?.grade, "좋음", "그 날짜 레코드를 그대로 돌려줌");
+  eq(pickForDate(weekly, "2026-08-19"), null, "그 날짜 레코드가 없으면 null");
+
+  // "좋은 시간대" 제목이 실제 등급과 어긋나면 안 돼요 — 보통 이상이 하나도 없을 때만 문구를 바꿔요.
+  eq(isGoodEnough("매우좋음"), true, "매우좋음은 괜찮음");
+  eq(isGoodEnough("보통"), true, "보통도 경계값으로 괜찮음");
+  eq(isGoodEnough("나쁨"), false, "나쁨은 괜찮지 않음");
+  eq(isGoodEnough("매우나쁨"), false, "매우나쁨도 괜찮지 않음");
+
+  eq(formatYmdWeekday("2026-08-15"), "8월 15일 (토)", "요일 포함 표기");
 
   console.log("activities.ts OK");
 }
