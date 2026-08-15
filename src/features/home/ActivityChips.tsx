@@ -1,4 +1,4 @@
-import type { CSSProperties } from "react";
+import type { CSSProperties, RefObject } from "react";
 import { useEffect, useMemo, useState } from "react";
 
 import { Card } from "../../components/ScreenLayout";
@@ -54,6 +54,7 @@ export function ActivityChips({
   stationId,
   selectedYmd,
   isToday,
+  rootRef,
 }: {
   /** "화면에 뜬 항"의 좌표예요(내 실제 위치가 아니라) — 태안 항을 보고 있으면 태안 근처 활동을 찾습니다. */
   coords: LatLng | null;
@@ -69,6 +70,8 @@ export function ActivityChips({
   /** 날짜 화살표로 고른 날짜(YYYY-MM-DD). */
   selectedYmd: string;
   isToday: boolean;
+  /** 코치마크가 가리킬 자리. 활동 칩이 아예 안 뜨면(20km 안에 지점 없음) 이 ref도 안 채워져요. */
+  rootRef?: RefObject<HTMLDivElement>;
 }) {
   const [selected, setSelected] = useState<ActivityKey | null>(null);
   const [state, setState] = useState<ActState>({ k: "idle" });
@@ -164,6 +167,7 @@ export function ActivityChips({
   };
 
   return (
+    <div ref={rootRef}>
     <Card style={{ marginTop: 12 }}>
       <p style={{ fontSize: 13, fontWeight: 700, color: palette.sub, margin: "0 0 10px" }}>
         {isToday ? "오늘" : formatYmdWeekday(selectedYmd)} 바다 활동 여건
@@ -235,6 +239,7 @@ export function ActivityChips({
           : "국립해양조사원 생활해양예보지수 기준이에요. 예보라 실제와 다를 수 있어요."}
       </p>
     </Card>
+    </div>
   );
 }
 

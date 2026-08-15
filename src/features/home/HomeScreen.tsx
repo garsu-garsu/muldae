@@ -2,6 +2,7 @@ import { Device } from "@apps-in-toss/web-framework";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { ImageBannerAd } from "../../components/BannerAd";
+import { CoachMarks } from "../../components/CoachMarks";
 import { Card } from "../../components/ScreenLayout";
 import { EVENT, track, trackScreen } from "../../lib/analytics";
 import {
@@ -44,6 +45,12 @@ export function HomeScreen() {
   const [favIds, setFavIds] = useState<string[]>(() => favoriteIds());
   const [refreshing, setRefreshing] = useState(false);
   const [refreshError, setRefreshError] = useState<string | null>(null);
+
+  // 코치마크가 가리킬 요소들.
+  const stationRowRef = useRef<HTMLDivElement>(null);
+  const glossaryRef = useRef<HTMLDivElement>(null);
+  const activityRowRef = useRef<HTMLDivElement>(null);
+  const dayNavRef = useRef<HTMLDivElement>(null);
 
   const pick = useCallback(async (id: string, stations: Station[]) => {
     const tide = await loadTide(id);
@@ -181,7 +188,10 @@ export function HomeScreen() {
   return (
     <Pad>
       {/* ------------------------------------------------- 관측소 선택 */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+      <div
+        ref={stationRowRef}
+        style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}
+      >
         <button
           onClick={() => setPicking((v) => !v)}
           style={{
@@ -275,7 +285,7 @@ export function HomeScreen() {
         </Card>
       )}
 
-      <DayNav offset={dayOffset} onChange={setDayOffset} date={date} />
+      <DayNav offset={dayOffset} onChange={setDayOffset} date={date} navRef={dayNavRef} />
 
       {events.length === 0 ? (
         <Note text="이 날짜의 물때 정보가 없어요." />
@@ -285,7 +295,7 @@ export function HomeScreen() {
           <Card style={{ marginBottom: 12 }}>
             <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
               <span style={{ fontSize: 28, fontWeight: 800, color: ts.color }}>{t}</span>
-              <GlossaryButton />
+              <GlossaryButton markRef={glossaryRef} />
               <span style={{ fontSize: 15, color: palette.sub }}>조차 {range}cm</span>
             </div>
             <p style={{ fontSize: 15, color: palette.sub, margin: "6px 0 0", lineHeight: 1.6 }}>
@@ -335,6 +345,7 @@ export function HomeScreen() {
             stationId={tide.station.id}
             selectedYmd={key}
             isToday={dayOffset === 0}
+            rootRef={activityRowRef}
           />
         </>
       )}
@@ -347,6 +358,32 @@ export function HomeScreen() {
       <div style={{ marginTop: 24 }}>
         <ImageBannerAd />
       </div>
+
+      <CoachMarks
+        storageKey="muldae:coach:v1"
+        steps={[
+          {
+            ref: stationRowRef,
+            title: "다른 항으로 바꿔보세요",
+            body: "이름을 누르면 목록에서, 지도 아이콘을 누르면 지도에서 항을 고를 수 있어요.",
+          },
+          {
+            ref: glossaryRef,
+            title: "사리·조금이 궁금하다면",
+            body: "물음표를 누르면 사리·조금·조차가 무슨 뜻인지 바로 볼 수 있어요.",
+          },
+          {
+            ref: activityRowRef,
+            title: "오늘 바다 활동은 어때요?",
+            body: "낚시·갯벌·해수욕 중에 고르면 오늘 여건이 좋은지 알려드려요.",
+          },
+          {
+            ref: dayNavRef,
+            title: "다른 날도 볼 수 있어요",
+            body: "화살표를 누르면 어제와 내일, 다음 주 물때까지 미리 볼 수 있어요.",
+          },
+        ]}
+      />
     </Pad>
   );
 }
@@ -356,9 +393,9 @@ export function HomeScreen() {
 const toMin = (t: string) => Number(t.slice(0, 2)) * 60 + Number(t.slice(2));
 
 /** 사리/보통/조금/조차 용어 설명. 물음표는 작게 — 물때 표시가 주인공이에요. */
-function GlossaryButton() {
+function GlossaryButton({ markRef }: { markRef: React.RefObject<HTMLDivElement> }) {
   const [open, setOpen] = useState(false);
-  const boxRef = useRef<HTMLDivElement>(null);
+  const boxRef = markRef;
 
   useEffect(() => {
     if (!open) return;
@@ -367,7 +404,7 @@ function GlossaryButton() {
     };
     document.addEventListener("mousedown", onOutside);
     return () => document.removeEventListener("mousedown", onOutside);
-  }, [open]);
+  }, [open, boxRef]);
 
   return (
     <div ref={boxRef} style={{ position: "relative", display: "inline-flex" }}>
@@ -431,10 +468,12 @@ function DayNav({
   offset,
   onChange,
   date,
+  navRef,
 }: {
   offset: number;
   onChange: (n: number) => void;
   date: Date;
+  navRef?: React.RefObject<HTMLDivElement>;
 }) {
   const label =
     offset === 0
@@ -445,7 +484,7 @@ function DayNav({
           ? "어제"
           : `${date.getMonth() + 1}월 ${date.getDate()}일`;
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "8px 0 14px" }}>
+    <div ref={navRef} style={{ display: "flex", alignItems: "center", gap: 8, margin: "8px 0 14px" }}>
       <NavBtn label="‹" onClick={() => onChange(offset - 1)} />
       <span style={{ flex: 1, textAlign: "center", fontSize: 17, fontWeight: 700, color: palette.ink }}>
         {label} ({date.getMonth() + 1}/{date.getDate()})
