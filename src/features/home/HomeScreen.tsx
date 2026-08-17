@@ -5,6 +5,8 @@ import { ImageBannerAd } from "../../components/BannerAd";
 import { CoachMarks } from "../../components/CoachMarks";
 import { Card } from "../../components/ScreenLayout";
 import { EVENT, track, trackScreen } from "../../lib/analytics";
+import { noteGoodExperience } from "../../lib/review";
+import { shareTide } from "../../lib/share";
 import {
   favoriteIds,
   lastPickerView,
@@ -17,6 +19,7 @@ import {
   todayKey,
   type PickerView,
 } from "../../lib/stations";
+import { formatSunTime, sunTimes } from "../../lib/sun";
 import {
   bestWindow,
   formatTime,
@@ -184,6 +187,9 @@ export function HomeScreen() {
   const tomorrow = new Date();
   tomorrow.setDate(tomorrow.getDate() + 1);
   const tomorrowEvents = tide.days[todayKey(tomorrow)] ?? [];
+  // 일출·일몰은 좌표만 있으면 계산되니 API 도, 잠금도 없어요. 새벽 만조가 해
+  // 뜨기 전인지 후인지가 이 앱을 여는 이유의 절반이라, 어느 날짜든 그냥 보여줘요.
+  const sun = sunTimes(key, tide.station.lat, tide.station.lng);
 
   return (
     <Pad>
@@ -266,7 +272,9 @@ export function HomeScreen() {
               onPick={(id) => {
                 setPicking(false);
                 setDayOffset(0);
-                void pick(id, stations);
+                // 보려던 항을 직접 골라 물때를 본 것 = 이 앱에서의 좋은 경험.
+                // 리뷰는 이때만 물어봐요(진입 직후에 뜨는 창은 반려 사유).
+                void pick(id, stations).then(noteGoodExperience);
               }}
             />
           ) : (
@@ -277,7 +285,9 @@ export function HomeScreen() {
               onPick={(id) => {
                 setPicking(false);
                 setDayOffset(0);
-                void pick(id, stations);
+                // 보려던 항을 직접 골라 물때를 본 것 = 이 앱에서의 좋은 경험.
+                // 리뷰는 이때만 물어봐요(진입 직후에 뜨는 창은 반려 사유).
+                void pick(id, stations).then(noteGoodExperience);
               }}
               onTileFailed={() => setPickerView("list")}
             />
@@ -322,6 +332,26 @@ export function HomeScreen() {
                 물 볼 시간 · {bestWindow(events, nowMin)}
               </div>
             )}
+
+            {sun != null && (
+              <div
+                style={{
+                  marginTop: 10,
+                  display: "flex",
+                  gap: 14,
+                  fontSize: 15,
+                  color: palette.sub,
+                }}
+              >
+                {/* 해가 뜨고 지는 시각. 색이 아니라 글자로 구분해요. */}
+                <span>
+                  일출 <b style={{ color: palette.ink }}>{formatSunTime(sun.rise)}</b>
+                </span>
+                <span>
+                  일몰 <b style={{ color: palette.ink }}>{formatSunTime(sun.set)}</b>
+                </span>
+              </div>
+            )}
           </Card>
 
           {/* ------------------------------------------------- 물때표 */}
@@ -330,6 +360,33 @@ export function HomeScreen() {
               <EventRow key={i} e={e} passed={dayOffset === 0 && toMin(e.t) <= nowMin} />
             ))}
           </Card>
+
+          {/* "내일 그 항 어때?" 를 그대로 보낼 수 있게. 만조·간조·일출·일몰이 한 덩어리로 나가요. */}
+          <button
+            type="button"
+            onClick={() =>
+              void shareTide({
+                station: tide.station,
+                ymd: key,
+                events,
+                rangeP25: tide.rangeP25,
+                rangeP75: tide.rangeP75,
+              })
+            }
+            style={{
+              width: "100%",
+              marginTop: 10,
+              border: `1px solid ${palette.line}`,
+              borderRadius: 12,
+              padding: "13px 0",
+              fontSize: 15,
+              fontWeight: 700,
+              color: palette.primary,
+              background: "transparent",
+            }}
+          >
+            이 물때 공유하기
+          </button>
 
           {/* ------------------------------------------- 활동별 여건 */}
           {/* 활동 지점은 "화면에 뜬 항" 기준이에요 — 물때는 가기 전에 미리 보는
@@ -350,8 +407,16 @@ export function HomeScreen() {
         </>
       )}
 
+      {/* 출처는 두 줄로 나눠요 — 물때는 정부 예보를 받아오고, 일출·일몰은 앱이
+          직접 계산해서 성격이 다릅니다. 한 문단에 붙이면 둘 다 조석예보에서
+          받아온 것처럼 읽혀요. */}
       <p style={{ fontSize: 12, color: palette.sub, marginTop: 16, lineHeight: 1.6 }}>
         국립해양조사원 조석예보 기준이에요. 실제 바다는 바람·기압에 따라 달라질 수 있어요.
+      </p>
+      <p style={{ fontSize: 12, color: palette.sub, margin: "4px 0 0", lineHeight: 1.6 }}>
+        일출·일몰은 이 항의 위치로 앱이 직접 계산해요. 미국 해군천문대(USNO)가 공개한
+        시각과 대조해 1분 안으로 맞췄고, 산이나 건물에 가리면 실제로 보이는 시각은
+        조금 늦거나 빠를 수 있어요.
       </p>
 
       {/* 이미지형 배너 — 물때표를 다 본 뒤에 만나요. */}

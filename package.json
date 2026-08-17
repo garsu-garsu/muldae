@@ -13,7 +13,9 @@
     "check:tide": "node --experimental-strip-types scripts/check-tide.ts",
     "check:activities": "node --experimental-strip-types scripts/check-activities.ts",
     "check:unlock": "node --experimental-strip-types scripts/check-unlock.ts",
-    "shot": "node scripts/shot.mjs"
+    "shot": "node scripts/shot.mjs",
+    "check:sun": "node --experimental-strip-types scripts/check-sun.ts",
+    "check:growth": "node --experimental-strip-types scripts/check-growth.ts"
   },
   "dependencies": {
     "@apps-in-toss/web-framework": "^3.0.2",
