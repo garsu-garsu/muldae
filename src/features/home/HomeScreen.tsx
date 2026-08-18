@@ -4,7 +4,16 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ImageBannerAd } from "../../components/BannerAd";
 import { CoachMarks } from "../../components/CoachMarks";
 import { Card } from "../../components/ScreenLayout";
+import {
+  ACTIVITY_LABEL,
+  loadDailyIndices,
+  seaStateOf,
+  waveLabel,
+  windLabel,
+  type DailyIndex,
+} from "../../lib/activities";
 import { EVENT, track, trackScreen } from "../../lib/analytics";
+import { useAdGate } from "../../hooks/useAdGate";
 import { isLocationAllowed } from "../../lib/locationPermission";
 import { noteGoodExperience } from "../../lib/review";
 import { shareTide } from "../../lib/share";
@@ -21,6 +30,7 @@ import {
   type PickerView,
 } from "../../lib/stations";
 import { formatSunTime, sunTimes } from "../../lib/sun";
+import { isIndexLocked, isUnlockedToday, markUnlockedToday } from "../../lib/unlock";
 import {
   bestWindow,
   formatTime,
@@ -51,6 +61,13 @@ export function HomeScreen() {
   const [refreshError, setRefreshError] = useState<string | null>(null);
   /** 위치로 항을 잡아본 적이 있는지. 버튼 문구를 정하는 데만 써요. */
   const locatedRef = useRef(false);
+  /** 그 항 근처 지수 9종(파고·풍속 포함). 화면에 보이는 날짜 기준이에요. */
+  const [indices, setIndices] = useState<DailyIndex[]>([]);
+  /** 오늘 광고를 봐서 내일 이후 정보가 열려 있는지. 활동 카드와 같은 값을 씁니다. */
+  const [unlocked, setUnlocked] = useState(() => isUnlockedToday());
+  const { watchThen } = useAdGate();
+  /** 근처에 지점이 없는 지수를 펼쳐 볼지. */
+  const [showFarIndices, setShowFarIndices] = useState(false);
 
   // 코치마크가 가리킬 요소들.
   const stationRowRef = useRef<HTMLDivElement>(null);
@@ -154,6 +171,24 @@ export function HomeScreen() {
     };
   }, [dayOffset, phase]);
 
+  // 그 항 근처 바다 상태(9종 지수). 항이나 날짜가 바뀌면 다시 받아요.
+  useEffect(() => {
+    if (phase.k !== "ready") return;
+    const date = new Date();
+    date.setDate(date.getDate() + dayOffset);
+    const ymd = todayKey(date);
+    const station = phase.tide.station;
+
+    let alive = true;
+    setIndices([]);
+    void loadDailyIndices({ lat: station.lat, lng: station.lng }, ymd).then((list) => {
+      if (alive) setIndices(list);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [phase.k, phase.k === "ready" ? phase.tide.station.id : "", dayOffset]);
+
   // 늦은 밤엔 오늘 간조가 다 지나 있어요. 내일 첫 간조까지 보여주려고 하루 앞서
   // 받아둬요(dayOffset과 무관 — 활동 카드는 항상 "오늘"만 보므로).
   useEffect(() => {
@@ -198,6 +233,8 @@ export function HomeScreen() {
   // 일출·일몰은 좌표만 있으면 계산되니 API 도, 잠금도 없어요. 새벽 만조가 해
   // 뜨기 전인지 후인지가 이 앱을 여는 이유의 절반이라, 어느 날짜든 그냥 보여줘요.
   const sun = sunTimes(key, tide.station.lat, tide.station.lng);
+  // 오늘 여건은 늘 무료. 내일 이후는 오늘 광고를 한 번 봤을 때만 열려요.
+  const indexLocked = isIndexLocked(dayOffset === 0, unlocked);
 
   return (
     <Pad>
@@ -341,6 +378,31 @@ export function HomeScreen() {
               </div>
             )}
 
+            {seaStateOf(indices) != null && (
+              <div style={{ marginTop: 10, display: "flex", gap: 14, fontSize: 15, color: palette.sub }}>
+                {seaStateOf(indices)?.wave != null && (
+                  <span>
+                    파도{" "}
+                    {indexLocked ? (
+                      <Skeleton width={76} />
+                    ) : (
+                      <b style={{ color: palette.ink }}>{waveLabel(seaStateOf(indices)!.wave!)}</b>
+                    )}
+                  </span>
+                )}
+                {seaStateOf(indices)?.wind != null && (
+                  <span>
+                    바람{" "}
+                    {indexLocked ? (
+                      <Skeleton width={86} />
+                    ) : (
+                      <b style={{ color: palette.ink }}>{windLabel(seaStateOf(indices)!.wind!)}</b>
+                    )}
+                  </span>
+                )}
+              </div>
+            )}
+
             {sun != null && (
               <div
                 style={{
@@ -368,6 +430,89 @@ export function HomeScreen() {
               <EventRow key={i} e={e} passed={dayOffset === 0 && toMin(e.t) <= nowMin} />
             ))}
           </Card>
+
+          {/* 국립해양조사원 생활해양예보지수 9종 — 근처에 지점이 있는 것만 나와요. */}
+          {indices.length > 0 && (
+            <Card style={{ marginTop: 12 }}>
+              <div style={{ fontSize: 15, fontWeight: 800, color: palette.ink, marginBottom: 10 }}>
+                이 근처 바다 여건
+              </div>
+              {/* 근처에 지점이 있는 것부터. 없는 지수는 접어둬요 — 회색 안내가
+                  여덟 줄 깔리면 정작 볼 것이 묻힙니다. */}
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {indices
+                  .filter((it) => it.point != null)
+                  .map((it) => (
+                    <IndexRow key={it.key} item={it} locked={indexLocked} />
+                  ))}
+              </div>
+
+              {indices.some((it) => it.point == null) && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setShowFarIndices((v) => !v)}
+                    style={{
+                      marginTop: 10,
+                      border: "none",
+                      background: "transparent",
+                      padding: 0,
+                      fontSize: 13,
+                      fontWeight: 700,
+                      color: palette.sub,
+                    }}
+                  >
+                    이 근처에 지점이 없는 지수 {indices.filter((it) => it.point == null).length}개{" "}
+                    {showFarIndices ? "접기" : "보기"}
+                  </button>
+
+                  {showFarIndices && (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 8 }}>
+                      {indices
+                        .filter((it) => it.point == null)
+                        .map((it) => (
+                          <IndexRow key={it.key} item={it} locked={indexLocked} />
+                        ))}
+                    </div>
+                  )}
+                </>
+              )}
+
+              {/* 오늘 것은 늘 무료예요. 내일 이후만 하루 한 번 광고로 열려요 —
+                  활동 카드의 "이번 주 좋은 시간대" 와 같은 광고 한 번으로 같이 열립니다. */}
+              {indexLocked && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    track(EVENT.premiumClicked, { where: "daily_index" });
+                    watchThen(() => {
+                      markUnlockedToday();
+                      setUnlocked(true);
+                      track(EVENT.premiumUnlocked, { where: "daily_index" });
+                    }, "daily_index");
+                  }}
+                  style={{
+                    width: "100%",
+                    marginTop: 12,
+                    border: "none",
+                    borderRadius: 12,
+                    padding: "13px 0",
+                    fontSize: 15,
+                    fontWeight: 800,
+                    color: palette.white,
+                    background: palette.primary,
+                  }}
+                >
+                  광고 보고 이 날짜 여건 보기
+                </button>
+              )}
+
+              <p style={{ fontSize: 12, color: palette.sub, margin: "10px 0 0", lineHeight: 1.6 }}>
+                국립해양조사원 생활해양예보지수예요. 지수마다 관측 지점이 달라서 항과 조금 떨어진
+                곳 기준일 수 있어요.
+              </p>
+            </Card>
+          )}
 
           {/* "내일 그 항 어때?" 를 그대로 보낼 수 있게. 만조·간조·일출·일몰이 한 덩어리로 나가요. */}
           <button
@@ -410,6 +555,8 @@ export function HomeScreen() {
             stationId={tide.station.id}
             selectedYmd={key}
             isToday={dayOffset === 0}
+            unlocked={unlocked}
+            onUnlock={() => setUnlocked(true)}
             rootRef={activityRowRef}
           />
         </>
@@ -462,6 +609,74 @@ export function HomeScreen() {
 }
 
 /* ------------------------------------------------------------------ 조각 */
+
+/** 지수 한 줄. 등급은 색만이 아니라 글자로도 읽혀야 해요. */
+function IndexRow({ item, locked }: { item: DailyIndex; locked: boolean }) {
+  const bits = [
+    item.wave == null ? "" : `파도 ${waveLabel(item.wave)}`,
+    item.wind == null ? "" : `바람 ${windLabel(item.wind)}`,
+  ].filter((b) => b !== "");
+
+  return (
+    <div style={{ display: "flex", alignItems: "flex-start", gap: 10, opacity: item.point == null ? 0.5 : 1 }}>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 15, fontWeight: 700, color: palette.ink }}>
+          {ACTIVITY_LABEL[item.key]}
+        </div>
+        <div style={{ fontSize: 13, color: palette.sub, marginTop: 2, display: "flex", gap: 6, alignItems: "center" }}>
+          {/* 어느 지점 기준인지는 잠겨도 보여줘요 — 무엇을 여는 건지 알아야 하니까요. */}
+          <span>{item.point ?? "이 근처에는 지점이 없어요"}</span>
+          {item.point != null &&
+            (locked ? <Skeleton width={128} /> : bits.length > 0 && <span>· {bits.join(" · ")}</span>)}
+        </div>
+      </div>
+      {item.point == null ? (
+        <span style={{ flexShrink: 0, fontSize: 13, color: palette.sub, paddingTop: 2 }}>—</span>
+      ) : locked ? (
+        <Skeleton width={52} />
+      ) : (
+        <span
+          style={{
+            flexShrink: 0,
+            fontSize: 14,
+            fontWeight: 800,
+            color: gradeColor(item.grade),
+            paddingTop: 1,
+          }}
+        >
+          {item.grade === "" ? "정보 없음" : item.grade}
+        </span>
+      )}
+    </div>
+  );
+}
+
+/**
+ * 잠긴 글자 자리. 글자를 지우지 않고 회색 막대로 덮어요 — 무엇이 있는지는
+ * 보이되 내용만 가려야, 광고를 볼지 말지 사용자가 판단할 수 있어요.
+ */
+function Skeleton({ width }: { width: number }) {
+  return (
+    <span
+      aria-label="광고를 보면 열려요"
+      style={{
+        display: "inline-block",
+        width,
+        height: 12,
+        borderRadius: 6,
+        background: "rgba(27,29,33,0.12)",
+        verticalAlign: "middle",
+      }}
+    />
+  );
+}
+
+/** 등급 색. 글자가 이미 등급을 말하니 색은 거들기만 해요. */
+function gradeColor(grade: string): string {
+  if (grade === "매우좋음" || grade === "좋음") return palette.primary;
+  if (grade === "나쁨" || grade === "매우나쁨") return palette.low ?? palette.sub;
+  return palette.sub;
+}
 
 const toMin = (t: string) => Number(t.slice(0, 2)) * 60 + Number(t.slice(2));
 

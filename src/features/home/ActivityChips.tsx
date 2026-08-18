@@ -29,7 +29,7 @@ import {
 import type { LatLng } from "../../lib/geo";
 import type { Event } from "../../lib/tide";
 import { palette } from "../../theme";
-import { isIndexLocked, isUnlockedToday, markUnlockedToday } from "../../lib/unlock";
+import { isIndexLocked, markUnlockedToday } from "../../lib/unlock";
 import { WeeklyBest } from "./WeeklyBest";
 
 type ActState =
@@ -54,6 +54,8 @@ export function ActivityChips({
   stationId,
   selectedYmd,
   isToday,
+  unlocked,
+  onUnlock,
   rootRef,
 }: {
   /** "화면에 뜬 항"의 좌표예요(내 실제 위치가 아니라) — 태안 항을 보고 있으면 태안 근처 활동을 찾습니다. */
@@ -67,6 +69,10 @@ export function ActivityChips({
   stationName: string;
   /** 이번 주 좋은 시간대(해수욕·스킨스쿠버)에서 날짜별 물때를 따로 받아올 때 써요. */
   stationId: string;
+  /** 오늘 광고를 봐서 내일 이후 정보가 열려 있는지. 요약 카드와 같은 값을 씁니다. */
+  unlocked: boolean;
+  /** 광고를 끝까지 본 순간. 잠긴 정보를 한 번에 여는 신호예요. */
+  onUnlock: () => void;
   /** 날짜 화살표로 고른 날짜(YYYY-MM-DD). */
   selectedYmd: string;
   isToday: boolean;
@@ -77,7 +83,6 @@ export function ActivityChips({
   const [state, setState] = useState<ActState>({ k: "idle" });
   const [rip, setRip] = useState<RipRecord | null>(null);
   const { watchThen } = useAdGate();
-  const [unlocked, setUnlocked] = useState(() => isUnlockedToday());
 
   // coords는 HomeScreen에서 매 렌더마다 새로 만든 객체라 참조가 안 바뀌길 기대하면
   // 안 돼요. 값이 실제로 바뀌었을 때만(=항이 바뀌었을 때만) 아래 effect들이 다시
@@ -161,7 +166,7 @@ export function ActivityChips({
     track(EVENT.premiumClicked);
     watchThen(() => {
       markUnlockedToday();
-      setUnlocked(true);
+      onUnlock();
       track(EVENT.premiumUnlocked);
     });
   };

@@ -149,6 +149,8 @@ export interface ActivityRecord {
   wave: number | null;
   /** 도, 대표 수온 */
   temp: number | null;
+  /** m/s, 대표 풍속. 국립해양조사원 지수에는 풍향이 없어서 세기만 옵니다. */
+  wind: number | null;
   /** 갯벌체험 전용 — 체험 가능 시작/종료(=물 들어오기 시작) */
   begin?: string;
   end?: string;
@@ -158,11 +160,92 @@ export interface ActivityRecord {
   grade2?: string;
 }
 
+/**
+ * 풍속을 숫자와 함께 사람 말로. 40~50대 사용자에게 "5m/s" 만 던지면 감이 안 와요.
+ * 기상청 육상 기준을 바다에 맞게 단순화했어요(9m/s 부터 나가기 어려운 바람).
+ */
+export function windLabel(mps: number): string {
+  const v = Math.round(mps * 10) / 10;
+  if (v < 4) return `${v}m/s 약함`;
+  if (v < 9) return `${v}m/s 보통`;
+  if (v < 14) return `${v}m/s 강함`;
+  return `${v}m/s 매우 강함`;
+}
+
+/** 파고를 사람 말로. 0.5m 는 숫자만 보면 감이 안 와요. */
+export function waveLabel(m: number): string {
+  const v = Math.round(m * 10) / 10;
+  if (v < 0.5) return `${v}m 잔잔`;
+  if (v < 1) return `${v}m 보통`;
+  if (v < 2) return `${v}m 높음`;
+  return `${v}m 매우 높음`;
+}
+
+export interface SeaState {
+  /** m */
+  wave: number | null;
+  /** m/s */
+  wind: number | null;
+  /** 어느 지수에서 가져왔는지 — 화면에 출처를 적을 때 써요. */
+  from: ActivityKey;
+}
+
+/** 9종 지수를 한 줄씩. */
+export interface DailyIndex {
+  key: ActivityKey;
+  /** 가장 가까운 지점 이름. 근처에 지점이 없으면 null 이에요. */
+  point: string | null;
+  /** 지점은 있는데 그 날짜 예보만 없을 수도 있어서 등급은 빈 문자열이 될 수 있어요. */
+  grade: string;
+  wave: number | null;
+  wind: number | null;
+}
+
+/**
+ * 그 항 근처에서 볼 수 있는 지수를 전부 가져와요(국립해양조사원 생활해양예보지수 9종).
+ *
+ * 지수마다 지점 목록이 달라서, 20km 안에 지점이 있는 것만 담습니다. 하나가
+ * 실패해도 나머지는 그대로 보여줘요 — 바다에서 쓰는 앱이라 한 종이 빠졌다고
+ * 화면이 비면 안 됩니다.
+ *
+ * ⚠️ 풍향은 9종 응답 어디에도 없어요(필드 전수 확인). 파고·풍속·수온까지만 옵니다.
+ */
+export async function loadDailyIndices(me: LatLng, ymd: string): Promise<DailyIndex[]> {
+  const keys = Object.keys(DEFS) as ActivityKey[];
+  return Promise.all(
+    keys.map(async (key): Promise<DailyIndex> => {
+      const point = nearestActivityPoint(me, key);
+      // 지점이 20km 안에 없으면 "이 근처에는 없다" 는 것도 정보라 목록에 남겨요.
+      if (point == null) return { key, point: null, grade: "", wave: null, wind: null };
+      try {
+        const records = await loadActivity(key, point.name);
+        const record = pickForDate(records, ymd);
+        return {
+          key,
+          point: point.name,
+          grade: record?.grade ?? "",
+          wave: record?.wave ?? null,
+          wind: record?.wind ?? null,
+        };
+      } catch {
+        return { key, point: point.name, grade: "", wave: null, wind: null };
+      }
+    }),
+  );
+}
+
+/** 요약 줄에 쓸 대표 파고·풍속. 9종 중 값이 있는 첫 지수를 씁니다. */
+export function seaStateOf(indices: DailyIndex[]): SeaState | null {
+  const hit = indices.find((i) => i.point != null && (i.wave != null || i.wind != null));
+  return hit == null ? null : { wave: hit.wave, wind: hit.wind, from: hit.key };
+}
+
 /** "파도 0.5m 안팎 · 수온 27도 정도" 류의 근거 한 줄 조각들. 오늘 카드·주간 베스트가 같이 써요. */
 export function activityBits(activity: ActivityKey, record: ActivityRecord): string[] {
   const bits: string[] = [];
   if (record.wave != null) bits.push(`파도 ${record.wave}m 안팎`);
   if (record.temp != null) bits.push(`수온 ${Math.round(record.temp)}도 정도`);
+  if (record.wind != null) bits.push(`바람 ${windLabel(record.wind)}`);
   if (activity === "서핑" && record.grade2) bits.push(`난이도 ${record.grade2}`);
   if (activity === "해수욕" && record.open) bits.push(record.open === "개장" ? "개장 중" : record.open);
   return bits;
@@ -203,28 +286,31 @@ function parseRecord(key: ActivityKey, it: Record<string, unknown>): ActivityRec
       | null,
     grade: String(it.totalIndex ?? ""),
   };
+  // 풍속은 지수마다 avgWspd 또는 min/maxWspd 로 와요. 있는 쪽을 씁니다.
+  const wind = num(it.avgWspd) ?? avg(it.minWspd, it.maxWspd) ?? num(it.maxWspd);
+
   if (key === "갯벌체험") {
     const { begin, end } = realWindow(String(it.mdftExprnBgngTm ?? ""), String(it.mdftExprnEndTm ?? ""));
-    return { ...base, wave: null, temp: null, begin, end };
+    return { ...base, wave: null, temp: null, wind, begin, end };
   }
   if (key === "바다갈라짐") {
     const { begin, end } = realWindow(String(it.splocBgngDt ?? ""), String(it.splocEndDt ?? ""));
-    return { ...base, wave: null, temp: null, begin, end };
+    return { ...base, wave: null, temp: null, wind, begin, end };
   }
   if (key === "해수욕") {
-    return { ...base, wave: num(it.maxWvhgt), temp: num(it.avgWtem), open: String(it.opnStat ?? "") };
+    return { ...base, wave: num(it.maxWvhgt), temp: num(it.avgWtem), wind, open: String(it.opnStat ?? "") };
   }
   if (key === "서핑") {
-    return { ...base, wave: num(it.avgWvhgt), temp: num(it.avgWtem), grade2: String(it.grdCn ?? "") };
+    return { ...base, wave: num(it.avgWvhgt), temp: num(it.avgWtem), wind, grade2: String(it.grdCn ?? "") };
   }
   if (key === "바다여행") {
-    return { ...base, wave: num(it.avgWvhgt), temp: num(it.avgWtem) };
+    return { ...base, wave: num(it.avgWvhgt), temp: num(it.avgWtem), wind };
   }
   if (key === "뱃멀미") {
-    return { ...base, wave: avg(it.minWvhgt, it.maxWvhgt), temp: null };
+    return { ...base, wave: avg(it.minWvhgt, it.maxWvhgt), temp: null, wind };
   }
   // 갯바위낚시, 선상낚시, 스킨스쿠버 — min/max 파고·수온을 평균으로 대표값 삼아요.
-  return { ...base, wave: avg(it.minWvhgt, it.maxWvhgt), temp: avg(it.minWtem, it.maxWtem) };
+  return { ...base, wave: avg(it.minWvhgt, it.maxWvhgt), temp: avg(it.minWtem, it.maxWtem), wind };
 }
 
 const SELECTED_KEY = "muldae:activity-selected";
@@ -609,9 +695,9 @@ export function demo(): void {
   // 다음 날 이 점검이 깨져요. 같은 방식으로 "오늘"을 직접 구해서 써요.
   const today = todayYmd();
   const records: ActivityRecord[] = [
-    { ymd: today, noon: "오전", grade: "좋음", wave: 0.4, temp: 27 },
-    { ymd: today, noon: "오후", grade: "나쁨", wave: 0.8, temp: 26 },
-    { ymd: "1999-01-01", noon: "오전", grade: "보통", wave: 0.5, temp: 27 },
+    { ymd: today, noon: "오전", grade: "좋음", wave: 0.4, wind: null, temp: 27 },
+    { ymd: today, noon: "오후", grade: "나쁨", wave: 0.8, wind: null, temp: 26 },
+    { ymd: "1999-01-01", noon: "오전", grade: "보통", wave: 0.5, wind: null, temp: 27 },
   ];
   // pickCurrent는 실행 시각(now)에 따라 오전/오후를 고르므로, 둘 중 하나인지만 확인해요.
   const cur = pickCurrent(records);
@@ -619,8 +705,8 @@ export function demo(): void {
 
   // 오늘 것이 없으면(캐시가 낡았으면) 가장 최근 날짜로 대신 — 그리고 그 날짜를 보여줘요.
   const stale = pickCurrent([
-    { ymd: "2026-08-10", noon: null, grade: "보통", wave: 0.3, temp: 26 },
-    { ymd: "2026-08-12", noon: null, grade: "좋음", wave: 0.3, temp: 26 },
+    { ymd: "2026-08-10", noon: null, grade: "보통", wave: 0.3, wind: null, temp: 26 },
+    { ymd: "2026-08-12", noon: null, grade: "좋음", wave: 0.3, wind: null, temp: 26 },
   ]);
   eq(stale?.ymd, "2026-08-12", "오늘 게 없으면 가장 최근 날짜");
   eq(pickCurrent([]), null, "레코드가 아예 없으면 null");
@@ -635,12 +721,12 @@ export function demo(): void {
   eq(isRipUrgent("관심"), false, "관심도 강조 안 함");
 
   // 물 들어오는 시각 — 지점명 표기, 내일 간조 넘김
-  const mudflatRecord: ActivityRecord = { ymd: today, noon: null, grade: "좋음", wave: null, temp: null, begin: "16:30", end: "18:00" };
+  const mudflatRecord: ActivityRecord = { ymd: today, noon: null, grade: "좋음", wave: null, wind: null, temp: null, begin: "16:30", end: "18:00" };
   const mudflatInflow = inflowLabel("갯벌체험", mudflatRecord, [], [], 0, "백사마을", "사초항");
   eq(mudflatInflow?.line1, "백사마을 갯벌 기준 · 18:00 무렵부터 물이 들어와요", "갯벌은 지점명을 밝힘");
   eq(mudflatInflow?.line2, "체험 가능 16:30~18:00", "체험 가능 시간은 둘째 줄");
 
-  const beachRecord: ActivityRecord = { ymd: today, noon: null, grade: "좋음", wave: 0.3, temp: 27 };
+  const beachRecord: ActivityRecord = { ymd: today, noon: null, grade: "좋음", wave: 0.3, wind: null, temp: 27 };
   const todayLow = [{ t: "1509", cm: 15, hl: "L" as const }];
   const beachInflow = inflowLabel("해수욕", beachRecord, todayLow, [], 0, "", "사초항");
   eq(beachInflow?.line1, "사초항 기준 · 15:09 간조 이후부터 물이 들어와요", "해수욕은 관측소명을 밝힘");
@@ -654,7 +740,7 @@ export function demo(): void {
   eq(inflowLabel("해수욕", beachRecord, todayLow, [], 23 * 60, "", "사초항"), null, "낼 것도 없으면 null");
 
   // 바다갈라짐 — 갯벌과 같은 방식으로 "길이 잠기는" 시각을 지점명과 함께
-  const splitRecord: ActivityRecord = { ymd: today, noon: null, grade: "보통", wave: null, temp: null, begin: "14:39", end: "18:00" };
+  const splitRecord: ActivityRecord = { ymd: today, noon: null, grade: "보통", wave: null, wind: null, temp: null, begin: "14:39", end: "18:00" };
   const splitInflow = inflowLabel("바다갈라짐", splitRecord, [], [], 0, "대섬", "사초항");
   eq(splitInflow?.line1, "대섬 기준 · 18:00 무렵부터 길이 잠겨요", "바다갈라짐은 지점명 + 잠기는 시각");
   eq(splitInflow?.line2, "건널 수 있는 시간 14:39~18:00", "건널 수 있는 시간은 둘째 줄");
@@ -681,11 +767,11 @@ export function demo(): void {
 
   // 이번 주 좋은 시간대 — 등급 좋은 순, 동점이면 가까운 날짜가 앞서야 해요.
   const weekly: ActivityRecord[] = [
-    { ymd: "2026-08-14", noon: "오전", grade: "보통", wave: null, temp: null },
-    { ymd: "2026-08-14", noon: "오후", grade: "매우좋음", wave: null, temp: null },
-    { ymd: "2026-08-15", noon: "오전", grade: "매우좋음", wave: null, temp: null },
-    { ymd: "2026-08-15", noon: "오후", grade: "나쁨", wave: null, temp: null },
-    { ymd: "2026-08-16", noon: "오전", grade: "좋음", wave: null, temp: null },
+    { ymd: "2026-08-14", noon: "오전", grade: "보통", wave: null, wind: null, temp: null },
+    { ymd: "2026-08-14", noon: "오후", grade: "매우좋음", wave: null, wind: null, temp: null },
+    { ymd: "2026-08-15", noon: "오전", grade: "매우좋음", wave: null, wind: null, temp: null },
+    { ymd: "2026-08-15", noon: "오후", grade: "나쁨", wave: null, wind: null, temp: null },
+    { ymd: "2026-08-16", noon: "오전", grade: "좋음", wave: null, wind: null, temp: null },
   ];
   const ranked = rankWeekly(weekly);
   eq(ranked.length, 3, "상위 3개만 뽑힘");
@@ -698,9 +784,9 @@ export function demo(): void {
   // 원본 API가 같은 날짜·시간대에 행을 중복으로 주는 지점이 있어요(신지도 등) —
   // 시간대당 하나만(더 좋은 등급) 남아야 top3가 진짜 3개의 다른 시간대가 돼요.
   const dupTime: ActivityRecord[] = [
-    { ymd: "2026-08-15", noon: "오전", grade: "좋음", wave: null, temp: null },
-    { ymd: "2026-08-15", noon: "오전", grade: "보통", wave: null, temp: null },
-    { ymd: "2026-08-16", noon: "오전", grade: "나쁨", wave: null, temp: null },
+    { ymd: "2026-08-15", noon: "오전", grade: "좋음", wave: null, wind: null, temp: null },
+    { ymd: "2026-08-15", noon: "오전", grade: "보통", wave: null, wind: null, temp: null },
+    { ymd: "2026-08-16", noon: "오전", grade: "나쁨", wave: null, wind: null, temp: null },
   ];
   const dedup = rankWeekly(dupTime);
   eq(dedup.length, 2, "같은 시간대 중복은 하나로 합쳐짐");
@@ -717,6 +803,22 @@ export function demo(): void {
   eq(isGoodEnough("매우나쁨"), false, "매우나쁨도 괜찮지 않음");
 
   eq(formatYmdWeekday("2026-08-15"), "8월 15일 (토)", "요일 포함 표기");
+
+    // 파고·풍속 표기 — 숫자만 던지면 감이 안 와서 말로도 알려줘요.
+  if (waveLabel(0.3) !== "0.3m 잔잔") throw new Error(`파고 표기: ${waveLabel(0.3)}`);
+  if (waveLabel(0.7) !== "0.7m 보통") throw new Error(`파고 표기: ${waveLabel(0.7)}`);
+  if (waveLabel(1.5) !== "1.5m 높음") throw new Error(`파고 표기: ${waveLabel(1.5)}`);
+  if (windLabel(3.84) !== "3.8m/s 약함") throw new Error(`풍속 표기: ${windLabel(3.84)}`);
+  if (windLabel(10) !== "10m/s 강함") throw new Error(`풍속 표기: ${windLabel(10)}`);
+
+  // 대표 파고·풍속은 근처에 지점이 있는 지수에서만 골라야 해요.
+  const noPoint: DailyIndex = { key: "서핑", point: null, grade: "", wave: null, wind: null };
+  const hasPoint: DailyIndex = { key: "바다여행", point: "인천내륙", grade: "보통", wave: 0.4, wind: 2 };
+  if (seaStateOf([noPoint]) != null) throw new Error("지점이 없는 지수를 대표로 골랐어요");
+  const picked = seaStateOf([noPoint, hasPoint]);
+  if (picked?.wave !== 0.4 || picked.from !== "바다여행") {
+    throw new Error(`대표 파고를 잘못 골랐어요: ${JSON.stringify(picked)}`);
+  }
 
   console.log("activities.ts OK");
 }
