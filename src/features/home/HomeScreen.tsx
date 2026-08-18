@@ -5,6 +5,7 @@ import { ImageBannerAd } from "../../components/BannerAd";
 import { CoachMarks } from "../../components/CoachMarks";
 import { Card } from "../../components/ScreenLayout";
 import { EVENT, track, trackScreen } from "../../lib/analytics";
+import { isLocationAllowed } from "../../lib/locationPermission";
 import { noteGoodExperience } from "../../lib/review";
 import { shareTide } from "../../lib/share";
 import {
@@ -48,6 +49,8 @@ export function HomeScreen() {
   const [favIds, setFavIds] = useState<string[]>(() => favoriteIds());
   const [refreshing, setRefreshing] = useState(false);
   const [refreshError, setRefreshError] = useState<string | null>(null);
+  /** 위치로 항을 잡아본 적이 있는지. 버튼 문구를 정하는 데만 써요. */
+  const locatedRef = useRef(false);
 
   // 코치마크가 가리킬 요소들.
   const stationRowRef = useRef<HTMLDivElement>(null);
@@ -66,6 +69,7 @@ export function HomeScreen() {
   const locateNearest = useCallback(
     async (stations: Station[]) => {
       const loc = await Device.getLocation({ accuracy: 3 });
+      locatedRef.current = true;
       const me = { lat: loc.coords.latitude, lng: loc.coords.longitude };
       const near = nearestStation(me, stations);
       await pick((near ?? stations[0]).id, stations);
@@ -83,13 +87,17 @@ export function HomeScreen() {
       }
 
       // 이동했을 수 있으니 위치로 가장 가까운 곳을 먼저 봅니다.
-      // 위치를 막으면 마지막에 고른 항으로 — 물때를 보러 온 사람을 권한 화면
-      // 앞에 세워두면 안 돼요.
-      try {
-        await locateNearest(stations);
-        return;
-      } catch {
-        // 위치를 못 쓸 때의 대비책
+      // 단, **이미 허용된 경우에만** 이에요. 아직 허용 전이라면 여기서 위치를
+      // 물으면 진입 직후 권한 바텀시트가 뜨고, 그게 심사 반려 사유입니다
+      // (20260818-16). 그때는 마지막에 고른 항으로 물때를 바로 보여주고,
+      // 위치는 "가까운 항으로" 버튼을 누를 때 잡아요.
+      if (await isLocationAllowed()) {
+        try {
+          await locateNearest(stations);
+          return;
+        } catch {
+          // 허용돼 있는데도 실패하면 아래 대비책으로 내려가요.
+        }
       }
 
       const saved = lastStation();
@@ -247,7 +255,7 @@ export function HomeScreen() {
               background: "rgba(22,104,184,0.10)",
             }}
           >
-            {refreshing ? "찾는 중…" : "다시 찾기"}
+            {refreshing ? "찾는 중…" : locatedRef.current ? "다시 찾기" : "가까운 항으로"}
           </button>
         </div>
       </div>
